@@ -124,4 +124,56 @@ class AdminControllerTest {
 
         verify(staticPageService).delete(1L);
     }
+
+    @Test
+    @WithMockUser(roles = "ADMIN")
+    void addSocialLink_rejectsJavascriptUrl() throws Exception {
+        mockMvc.perform(post("/admin/social-links")
+                        .with(csrf())
+                        .param("platform", "evil")
+                        .param("displayName", "Evil")
+                        .param("url", "javascript:alert(1)")
+                        .param("sortOrder", "0"))
+                .andExpect(status().is3xxRedirection())
+                .andExpect(redirectedUrl("/admin/social-links"));
+
+        verify(socialLinkService, never()).save(any());
+    }
+
+    @Test
+    @WithMockUser(roles = "ADMIN")
+    void addSocialLink_acceptsHttpsUrl() throws Exception {
+        mockMvc.perform(post("/admin/social-links")
+                        .with(csrf())
+                        .param("platform", "linkedin")
+                        .param("displayName", "LinkedIn")
+                        .param("url", "https://linkedin.com/in/test")
+                        .param("sortOrder", "1"))
+                .andExpect(status().is3xxRedirection())
+                .andExpect(redirectedUrl("/admin/social-links"));
+
+        verify(socialLinkService).save(any());
+    }
+
+    @Test
+    @WithMockUser(roles = "ADMIN")
+    void settings_returnsSettingsPage() throws Exception {
+        when(siteConfigService.get("site.name")).thenReturn("David Neto");
+        when(siteConfigService.get("site.tagline")).thenReturn("Developer");
+        when(siteConfigService.get("site.photo_path")).thenReturn("");
+
+        mockMvc.perform(get("/admin/settings"))
+                .andExpect(status().isOk())
+                .andExpect(view().name("admin/settings"));
+    }
+
+    @Test
+    @WithMockUser(roles = "ADMIN")
+    void socialLinks_returnsSocialLinksPage() throws Exception {
+        when(socialLinkService.getAllSorted()).thenReturn(Collections.emptyList());
+
+        mockMvc.perform(get("/admin/social-links"))
+                .andExpect(status().isOk())
+                .andExpect(view().name("admin/social-links"));
+    }
 }
