@@ -1,0 +1,66 @@
+<!DOCTYPE html>
+<html xmlns:th="http://www.thymeleaf.org">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Admin — Social Links</title>
+    <link rel="stylesheet" th:href="@{/css/terminal.css}">
+</head>
+<body>
+    <nav class="nav">
+        <div style="display: flex; gap: 20px; align-items: center;">
+            <span class="nav-prompt">admin@neto:~$</span>
+            <a href="/admin/posts" style="color: var(--text-secondary);">Posts</a>
+            <a href="/admin/pages" style="color: var(--text-secondary);">Pages</a>
+            <a href="/admin/social-links" style="color: #fff; border-bottom: 1px solid var(--accent);">Social Links</a>
+            <a href="/admin/settings" style="color: var(--text-secondary);">Settings</a>
+        </div>
+        <a href="/admin/logout" style="color: var(--text-muted); font-size: 12px;">logout</a>
+    </nav>
+    <div style="padding: 24px 32px;">
+        <div class="section-header" style="margin-bottom: 16px;">$ ls social-links/</div>
+
+        <div class="post-list" th:if="${not #lists.isEmpty(links)}" style="margin-bottom: 24px;">
+            <div th:each="link : ${links}" class="post-item" style="display: flex; justify-content: space-between; align-items: center;">
+                <div>
+                    <span class="post-title" th:text="${link.displayName}">LinkedIn</span>
+                    <span class="post-meta" th:text="' — ' + ${link.platform} + ' — ' + ${link.url}">platform — url</span>
+                </div>
+                <form th:action="@{/admin/social-links/{id}/delete(id=${link.id})}" method="post" style="display:inline;">
+                    <button type="submit" style="color: #ff4444; background: none; border: none; font-family: inherit; font-size: 12px; cursor: pointer;">delete</button>
+                </form>
+            </div>
+        </div>
+
+        <div style="border: 1px solid var(--border-light); border-radius: 4px; padding: 16px; margin-top: 16px;">
+            <div style="color: var(--accent); font-size: 13px; margin-bottom: 12px;">+ add new link</div>
+            <form action="/admin/social-links" method="post" style="display: flex; gap: 10px; flex-wrap: wrap; align-items: flex-end;">
+                <div>
+                    <label style="color: var(--text-muted); font-size: 10px; text-transform: uppercase; display: block; margin-bottom: 4px;">Platform</label>
+                    <input type="text" name="platform" required placeholder="linkedin"
+                           style="background: var(--surface); border: 1px solid var(--border-light); color: var(--text); padding: 6px 10px; font-family: inherit; font-size: 13px; border-radius: 3px; width: 120px;">
+                </div>
+                <div>
+                    <label style="color: var(--text-muted); font-size: 10px; text-transform: uppercase; display: block; margin-bottom: 4px;">Display Name</label>
+                    <input type="text" name="displayName" required placeholder="LinkedIn"
+                           style="background: var(--surface); border: 1px solid var(--border-light); color: var(--text); padding: 6px 10px; font-family: inherit; font-size: 13px; border-radius: 3px; width: 140px;">
+                </div>
+                <div style="flex: 1;">
+                    <label style="color: var(--text-muted); font-size: 10px; text-transform: uppercase; display: block; margin-bottom: 4px;">URL</label>
+                    <input type="url" name="url" required placeholder="https://linkedin.com/in/..."
+                           style="width: 100%; background: var(--surface); border: 1px solid var(--border-light); color: var(--text); padding: 6px 10px; font-family: inherit; font-size: 13px; border-radius: 3px;">
+                </div>
+                <div>
+                    <label style="color: var(--text-muted); font-size: 10px; text-transform: uppercase; display: block; margin-bottom: 4px;">Order</label>
+                    <input type="number" name="sortOrder" value="0"
+                           style="background: var(--surface); border: 1px solid var(--border-light); color: var(--text); padding: 6px 10px; font-family: inherit; font-size: 13px; border-radius: 3px; width: 60px;">
+                </div>
+                <button type="submit"
+                        style="color: var(--bg); font-size: 13px; background: var(--accent); padding: 6px 16px; border-radius: 3px; border: none; font-family: inherit; font-weight: bold; cursor: pointer;">
+                    add
+                </button>
+            </form>
+        </div>
+    </div>
+</body>
+</html>

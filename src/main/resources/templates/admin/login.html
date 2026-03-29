@@ -1,0 +1,33 @@
+<!DOCTYPE html>
+<html xmlns:th="http://www.thymeleaf.org">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Admin Login</title>
+    <link rel="stylesheet" th:href="@{/css/terminal.css}">
+</head>
+<body style="display: flex; align-items: center; justify-content: center; min-height: 100vh;">
+    <div style="width: 100%; max-width: 400px; padding: 32px;">
+        <div style="color: var(--accent); margin-bottom: 24px; font-size: 14px;">admin@neto:~$ login</div>
+        <div th:if="${param.error}" style="color: #ff4444; margin-bottom: 16px; font-size: 13px;">
+            Invalid username or password.
+        </div>
+        <form th:action="@{/admin/login}" method="post">
+            <div style="margin-bottom: 16px;">
+                <label style="color: var(--text-muted); font-size: 11px; text-transform: uppercase; display: block; margin-bottom: 4px;">Username</label>
+                <input type="text" name="username" required
+                       style="width: 100%; background: var(--surface); border: 1px solid var(--border-light); color: var(--text); padding: 10px 12px; font-family: inherit; font-size: 14px; border-radius: 3px;">
+            </div>
+            <div style="margin-bottom: 24px;">
+                <label style="color: var(--text-muted); font-size: 11px; text-transform: uppercase; display: block; margin-bottom: 4px;">Password</label>
+                <input type="password" name="password" required
+                       style="width: 100%; background: var(--surface); border: 1px solid var(--border-light); color: var(--text); padding: 10px 12px; font-family: inherit; font-size: 14px; border-radius: 3px;">
+            </div>
+            <button type="submit"
+                    style="width: 100%; background: var(--accent); color: var(--bg); padding: 10px; border: none; font-family: inherit; font-size: 14px; font-weight: bold; border-radius: 3px; cursor: pointer;">
+                login
+            </button>
+        </form>
+    </div>
+</body>
+</html>
