@@ -25,3 +25,27 @@ replay_pid*
 
 # Worktrees
 .worktrees/
+
+# Maven
+target/
+
+# IDE
+.idea/
+*.iml
+.vscode/
+.settings/
+.project
+.classpath
+
+# Spring Boot
+*.jar
+*.war
+
+# Environment
+.env
+
+# Uploads
+uploads/
+
+# Superpowers
+.superpowers/
