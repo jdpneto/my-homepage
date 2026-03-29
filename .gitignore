@@ -37,10 +37,6 @@ target/
 .project
 .classpath
 
-# Spring Boot
-*.jar
-*.war
-
 # Environment
 .env
 
