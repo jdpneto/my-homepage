@@ -5,6 +5,7 @@ import com.davidneto.homepage.repository.BlogPostRepository;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 
 import java.time.LocalDateTime;
 import java.util.List;
@@ -35,13 +36,15 @@ public class BlogPostService {
         return blogPostRepository.findAll();
     }
 
+    @Transactional
     public BlogPost save(BlogPost post) {
         if (post.getSlug() == null || post.getSlug().isBlank()) {
-            post.setSlug(generateSlug(post.getTitle()));
+            post.setSlug(SlugGenerator.generate(post.getTitle(), blogPostRepository::existsBySlug));
         }
         return blogPostRepository.save(post);
     }
 
+    @Transactional
     public BlogPost publish(Long id) {
         BlogPost post = blogPostRepository.findById(id).orElseThrow();
         post.setPublished(true);
@@ -51,29 +54,16 @@ public class BlogPostService {
         return blogPostRepository.save(post);
     }
 
+    @Transactional
     public BlogPost unpublish(Long id) {
         BlogPost post = blogPostRepository.findById(id).orElseThrow();
         post.setPublished(false);
         return blogPostRepository.save(post);
     }
 
+    @Transactional
     public void delete(Long id) {
         BlogPost post = blogPostRepository.findById(id).orElseThrow();
         blogPostRepository.delete(post);
-    }
-
-    private String generateSlug(String title) {
-        String base = title.toLowerCase()
-                .replaceAll("[^a-z0-9\\s-]", "")
-                .replaceAll("\\s+", "-")
-                .replaceAll("-+", "-")
-                .replaceAll("^-|-$", "");
-
-        String slug = base;
-        int counter = 2;
-        while (blogPostRepository.existsBySlug(slug)) {
-            slug = base + "-" + counter++;
-        }
-        return slug;
     }
 }

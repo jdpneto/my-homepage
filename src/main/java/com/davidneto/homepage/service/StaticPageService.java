@@ -3,6 +3,7 @@ package com.davidneto.homepage.service;
 import com.davidneto.homepage.entity.StaticPage;
 import com.davidneto.homepage.repository.StaticPageRepository;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 
 import java.util.List;
 import java.util.Optional;
@@ -28,30 +29,17 @@ public class StaticPageService {
         return staticPageRepository.findAll();
     }
 
+    @Transactional
     public StaticPage save(StaticPage page) {
         if (page.getSlug() == null || page.getSlug().isBlank()) {
-            page.setSlug(generateSlug(page.getTitle()));
+            page.setSlug(SlugGenerator.generate(page.getTitle(), staticPageRepository::existsBySlug));
         }
         return staticPageRepository.save(page);
     }
 
+    @Transactional
     public void delete(Long id) {
         StaticPage page = staticPageRepository.findById(id).orElseThrow();
         staticPageRepository.delete(page);
-    }
-
-    private String generateSlug(String title) {
-        String base = title.toLowerCase()
-                .replaceAll("[^a-z0-9\\s-]", "")
-                .replaceAll("\\s+", "-")
-                .replaceAll("-+", "-")
-                .replaceAll("^-|-$", "");
-
-        String slug = base;
-        int counter = 2;
-        while (staticPageRepository.existsBySlug(slug)) {
-            slug = base + "-" + counter++;
-        }
-        return slug;
     }
 }
