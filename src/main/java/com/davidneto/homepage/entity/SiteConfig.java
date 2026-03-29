@@ -11,7 +11,7 @@ public class SiteConfig {
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;
 
-    @Column(nullable = false, unique = true, length = 100)
+    @Column(name = "\"key\"", nullable = false, unique = true, length = 100)
     private String key;
 
     @Column(columnDefinition = "TEXT")
