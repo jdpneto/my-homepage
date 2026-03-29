@@ -33,7 +33,7 @@ public class BlogController {
         model.addAttribute("view", "blog/list");
         model.addAttribute("currentPage", "blog");
         model.addAttribute("siteName", siteConfigService.get("site.name"));
-        model.addAttribute("posts", blogPostService.getPublishedPosts(PageRequest.of(page, 10)));
+        model.addAttribute("posts", blogPostService.getPublishedPosts(PageRequest.of(Math.max(0, page), 10)));
         return "layout";
     }
 
