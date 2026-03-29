@@ -32,11 +32,11 @@ CREATE TABLE social_link (
 
 CREATE TABLE site_config (
     id BIGSERIAL PRIMARY KEY,
-    key VARCHAR(100) NOT NULL UNIQUE,
+    config_key VARCHAR(100) NOT NULL UNIQUE,
     value TEXT,
     updated_at TIMESTAMP NOT NULL DEFAULT NOW()
 );
 
-INSERT INTO site_config (key, value) VALUES ('site.name', 'David Neto');
-INSERT INTO site_config (key, value) VALUES ('site.tagline', 'Software Developer');
-INSERT INTO site_config (key, value) VALUES ('site.photo_path', '');
+INSERT INTO site_config (config_key, value) VALUES ('site.name', 'David Neto');
+INSERT INTO site_config (config_key, value) VALUES ('site.tagline', 'Software Developer');
+INSERT INTO site_config (config_key, value) VALUES ('site.photo_path', '');

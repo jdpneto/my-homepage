@@ -26,17 +26,17 @@ class SiteConfigServiceTest {
     @Test
     void get_returnsValue() {
         SiteConfig config = new SiteConfig();
-        config.setKey("site.name");
+        config.setConfigKey("site.name");
         config.setValue("David Neto");
 
-        when(siteConfigRepository.findByKey("site.name")).thenReturn(Optional.of(config));
+        when(siteConfigRepository.findByConfigKey("site.name")).thenReturn(Optional.of(config));
 
         assertThat(siteConfigService.get("site.name")).isEqualTo("David Neto");
     }
 
     @Test
     void get_returnsEmptyStringWhenMissing() {
-        when(siteConfigRepository.findByKey("missing")).thenReturn(Optional.empty());
+        when(siteConfigRepository.findByConfigKey("missing")).thenReturn(Optional.empty());
 
         assertThat(siteConfigService.get("missing")).isEmpty();
     }
@@ -44,10 +44,10 @@ class SiteConfigServiceTest {
     @Test
     void set_updatesExistingConfig() {
         SiteConfig config = new SiteConfig();
-        config.setKey("site.name");
+        config.setConfigKey("site.name");
         config.setValue("Old Name");
 
-        when(siteConfigRepository.findByKey("site.name")).thenReturn(Optional.of(config));
+        when(siteConfigRepository.findByConfigKey("site.name")).thenReturn(Optional.of(config));
         when(siteConfigRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
 
         siteConfigService.set("site.name", "New Name");
