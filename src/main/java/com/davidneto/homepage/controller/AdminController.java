@@ -170,8 +170,6 @@ public class AdminController {
         page.setContent(content);
         if ("publish".equals(action)) {
             page.setPublished(true);
-        } else {
-            page.setPublished(false);
         }
         staticPageService.save(page);
         return "redirect:/admin/pages/" + id + "/edit";
@@ -232,10 +230,12 @@ public class AdminController {
         siteConfigService.set("site.name", siteName);
         siteConfigService.set("site.tagline", siteTagline != null ? siteTagline : "");
 
+        boolean hasError = false;
         if (photo != null && !photo.isEmpty()) {
             String ext = getExtension(photo.getOriginalFilename()).toLowerCase();
             if (!ALLOWED_IMAGE_EXTENSIONS.contains(ext)) {
                 model.addAttribute("error", "Unsupported image format. Allowed: jpg, jpeg, png, gif, webp");
+                hasError = true;
             } else {
                 Path uploadPath = Paths.get(uploadDir);
                 Files.createDirectories(uploadPath);
@@ -245,8 +245,9 @@ public class AdminController {
                 siteConfigService.set("site.photo_path", "/uploads/" + filename);
             }
         }
-
-        model.addAttribute("saved", true);
+        if (!hasError) {
+            model.addAttribute("saved", true);
+        }
         model.addAttribute("siteName", siteConfigService.get("site.name"));
         model.addAttribute("siteTagline", siteConfigService.get("site.tagline"));
         model.addAttribute("photoPath", siteConfigService.get("site.photo_path"));
@@ -254,8 +255,8 @@ public class AdminController {
     }
 
     private String getExtension(String filename) {
-        if (filename == null) return ".jpg";
+        if (filename == null) return "";
         int dot = filename.lastIndexOf('.');
-        return dot >= 0 ? filename.substring(dot) : ".jpg";
+        return dot >= 0 ? filename.substring(dot) : "";
     }
 }
