@@ -8,16 +8,7 @@
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/easymde/dist/easymde.min.css">
 </head>
 <body>
-    <nav class="nav">
-        <div style="display: flex; gap: 20px; align-items: center;">
-            <span class="nav-prompt">admin@neto:~$</span>
-            <a href="/admin/posts" style="color: var(--text-secondary);">Posts</a>
-            <a href="/admin/pages" style="color: #fff; border-bottom: 1px solid var(--accent);">Pages</a>
-            <a href="/admin/social-links" style="color: var(--text-secondary);">Social Links</a>
-            <a href="/admin/settings" style="color: var(--text-secondary);">Settings</a>
-        </div>
-        <a href="/admin/logout" style="color: var(--text-muted); font-size: 12px;">logout</a>
-    </nav>
+    <nav th:replace="~{admin/fragments :: admin-nav('pages')}"></nav>
     <div style="padding: 24px 32px;">
         <form th:action="${page.id != null ? '/admin/pages/' + page.id + '/edit' : '/admin/pages/new'}" method="post">
             <div style="display: flex; gap: 12px; margin-bottom: 12px;">

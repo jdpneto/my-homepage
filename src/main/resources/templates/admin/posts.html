@@ -7,16 +7,7 @@
     <link rel="stylesheet" th:href="@{/css/terminal.css}">
 </head>
 <body>
-    <nav class="nav">
-        <div style="display: flex; gap: 20px; align-items: center;">
-            <span class="nav-prompt">admin@neto:~$</span>
-            <a href="/admin/posts" style="color: #fff; border-bottom: 1px solid var(--accent);">Posts</a>
-            <a href="/admin/pages" style="color: var(--text-secondary);">Pages</a>
-            <a href="/admin/social-links" style="color: var(--text-secondary);">Social Links</a>
-            <a href="/admin/settings" style="color: var(--text-secondary);">Settings</a>
-        </div>
-        <a href="/admin/logout" style="color: var(--text-muted); font-size: 12px;">logout</a>
-    </nav>
+    <nav th:replace="~{admin/fragments :: admin-nav('posts')}"></nav>
     <div style="padding: 24px 32px;">
         <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px;">
             <div class="section-header" style="margin-bottom: 0;">$ ls posts/</div>
