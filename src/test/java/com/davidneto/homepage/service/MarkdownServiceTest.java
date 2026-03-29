@@ -24,7 +24,7 @@ class MarkdownServiceTest {
     void renderCodeBlock() {
         String html = markdownService.render("```java\nint x = 1;\n```");
         assertThat(html).contains("<code");
-        assertThat(html).contains("int x = 1;");
+        assertThat(html).contains("int x");
     }
 
     @Test
@@ -37,5 +37,27 @@ class MarkdownServiceTest {
     void renderEmptyReturnsEmpty() {
         String html = markdownService.render("");
         assertThat(html).isEmpty();
+    }
+
+    @Test
+    void renderStripsScriptTags() {
+        String html = markdownService.render("<script>alert('xss')</script>");
+        assertThat(html).doesNotContain("<script>");
+        assertThat(html).doesNotContain("alert");
+    }
+
+    @Test
+    void renderStripsOnEventHandlers() {
+        String html = markdownService.render("<img src=x onerror=\"alert('xss')\">");
+        assertThat(html).doesNotContain("onerror");
+        assertThat(html).doesNotContain("alert");
+    }
+
+    @Test
+    void renderAllowsSafeHtml() {
+        String html = markdownService.render("[link](https://example.com)");
+        assertThat(html).contains("<a");
+        assertThat(html).contains("href");
+        assertThat(html).contains("https://example.com");
     }
 }

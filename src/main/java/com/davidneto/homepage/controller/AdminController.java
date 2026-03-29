@@ -14,10 +14,13 @@ import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
+import java.util.Set;
 
 @Controller
 @RequestMapping("/admin")
 public class AdminController {
+
+    private static final Set<String> ALLOWED_IMAGE_EXTENSIONS = Set.of(".jpg", ".jpeg", ".png", ".gif", ".webp");
 
     private final BlogPostService blogPostService;
     private final StaticPageService staticPageService;
@@ -193,6 +196,9 @@ public class AdminController {
                                 @RequestParam String displayName,
                                 @RequestParam String url,
                                 @RequestParam(defaultValue = "0") int sortOrder) {
+        if (!url.startsWith("http://") && !url.startsWith("https://")) {
+            return "redirect:/admin/social-links";
+        }
         SocialLink link = new SocialLink();
         link.setPlatform(platform);
         link.setDisplayName(displayName);
@@ -227,12 +233,17 @@ public class AdminController {
         siteConfigService.set("site.tagline", siteTagline != null ? siteTagline : "");
 
         if (photo != null && !photo.isEmpty()) {
-            Path uploadPath = Paths.get(uploadDir);
-            Files.createDirectories(uploadPath);
-            String filename = "photo" + getExtension(photo.getOriginalFilename());
-            Path filePath = uploadPath.resolve(filename);
-            photo.transferTo(filePath.toFile());
-            siteConfigService.set("site.photo_path", "/uploads/" + filename);
+            String ext = getExtension(photo.getOriginalFilename()).toLowerCase();
+            if (!ALLOWED_IMAGE_EXTENSIONS.contains(ext)) {
+                model.addAttribute("error", "Unsupported image format. Allowed: jpg, jpeg, png, gif, webp");
+            } else {
+                Path uploadPath = Paths.get(uploadDir);
+                Files.createDirectories(uploadPath);
+                String filename = "photo" + ext;
+                Path filePath = uploadPath.resolve(filename);
+                photo.transferTo(filePath.toFile());
+                siteConfigService.set("site.photo_path", "/uploads/" + filename);
+            }
         }
 
         model.addAttribute("saved", true);

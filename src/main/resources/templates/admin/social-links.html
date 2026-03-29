@@ -34,7 +34,7 @@
 
         <div style="border: 1px solid var(--border-light); border-radius: 4px; padding: 16px; margin-top: 16px;">
             <div style="color: var(--accent); font-size: 13px; margin-bottom: 12px;">+ add new link</div>
-            <form action="/admin/social-links" method="post" style="display: flex; gap: 10px; flex-wrap: wrap; align-items: flex-end;">
+            <form th:action="@{/admin/social-links}" method="post" style="display: flex; gap: 10px; flex-wrap: wrap; align-items: flex-end;">
                 <div>
                     <label style="color: var(--text-muted); font-size: 10px; text-transform: uppercase; display: block; margin-bottom: 4px;">Platform</label>
                     <input type="text" name="platform" required placeholder="linkedin"

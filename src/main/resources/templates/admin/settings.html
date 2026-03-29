@@ -22,7 +22,7 @@
 
         <div th:if="${saved}" style="color: var(--accent); margin-bottom: 16px; font-size: 13px;">Settings saved.</div>
 
-        <form action="/admin/settings" method="post" enctype="multipart/form-data">
+        <form th:action="@{/admin/settings}" method="post" enctype="multipart/form-data">
             <div style="margin-bottom: 16px;">
                 <label style="color: var(--text-muted); font-size: 11px; text-transform: uppercase; display: block; margin-bottom: 4px;">Site Name</label>
                 <input type="text" name="siteName" th:value="${siteName}" required
