@@ -1,11 +1,11 @@
 package com.davidneto.homepage.service;
 
 import com.davidneto.homepage.entity.BlogPost;
+import com.davidneto.homepage.entity.OwnerType;
 import com.davidneto.homepage.repository.BlogPostRepository;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
-import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.data.domain.Page;
@@ -25,13 +25,16 @@ class BlogPostServiceTest {
     @Mock
     private BlogPostRepository blogPostRepository;
 
-    @InjectMocks
+    @Mock
+    private ImageService imageService;
+
     private BlogPostService blogPostService;
 
     private BlogPost post;
 
     @BeforeEach
     void setUp() {
+        blogPostService = new BlogPostService(blogPostRepository, imageService);
         post = new BlogPost();
         post.setId(1L);
         post.setTitle("Test Post");
@@ -100,6 +103,16 @@ class BlogPostServiceTest {
 
         blogPostService.delete(1L);
 
+        verify(blogPostRepository).delete(post);
+    }
+
+    @Test
+    void delete_cascadesImageDeletion() {
+        when(blogPostRepository.findById(1L)).thenReturn(Optional.of(post));
+
+        blogPostService.delete(1L);
+
+        verify(imageService).deleteAllByOwner(OwnerType.BLOG_POST, 1L);
         verify(blogPostRepository).delete(post);
     }
 }

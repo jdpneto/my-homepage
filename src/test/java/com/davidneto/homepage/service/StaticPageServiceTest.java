@@ -1,11 +1,11 @@
 package com.davidneto.homepage.service;
 
+import com.davidneto.homepage.entity.OwnerType;
 import com.davidneto.homepage.entity.StaticPage;
 import com.davidneto.homepage.repository.StaticPageRepository;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
-import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 
@@ -21,13 +21,16 @@ class StaticPageServiceTest {
     @Mock
     private StaticPageRepository staticPageRepository;
 
-    @InjectMocks
+    @Mock
+    private ImageService imageService;
+
     private StaticPageService staticPageService;
 
     private StaticPage page;
 
     @BeforeEach
     void setUp() {
+        staticPageService = new StaticPageService(staticPageRepository, imageService);
         page = new StaticPage();
         page.setId(1L);
         page.setTitle("Privacy Policy");
@@ -61,6 +64,16 @@ class StaticPageServiceTest {
 
         staticPageService.delete(1L);
 
+        verify(staticPageRepository).delete(page);
+    }
+
+    @Test
+    void delete_cascadesImageDeletion() {
+        when(staticPageRepository.findById(1L)).thenReturn(Optional.of(page));
+
+        staticPageService.delete(1L);
+
+        verify(imageService).deleteAllByOwner(OwnerType.STATIC_PAGE, 1L);
         verify(staticPageRepository).delete(page);
     }
 }
