@@ -1,0 +1,42 @@
+<!DOCTYPE html>
+<html xmlns:th="http://www.thymeleaf.org">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Admin — Settings</title>
+    <link rel="stylesheet" th:href="@{/css/terminal.css}">
+</head>
+<body>
+    <nav th:replace="~{admin/fragments :: admin-nav('settings')}"></nav>
+    <div style="padding: 24px 32px; max-width: 600px;">
+        <div class="section-header" style="margin-bottom: 16px;">$ vi site.conf</div>
+
+        <div th:if="${saved}" style="color: var(--accent); margin-bottom: 16px; font-size: 13px;">Settings saved.</div>
+
+        <form th:action="@{/admin/settings}" method="post" enctype="multipart/form-data">
+            <div style="margin-bottom: 16px;">
+                <label style="color: var(--text-muted); font-size: 11px; text-transform: uppercase; display: block; margin-bottom: 4px;">Site Name</label>
+                <input type="text" name="siteName" th:value="${siteName}" required
+                       style="width: 100%; background: var(--surface); border: 1px solid var(--border-light); color: var(--text); padding: 8px 12px; font-family: inherit; font-size: 14px; border-radius: 3px;">
+            </div>
+            <div style="margin-bottom: 16px;">
+                <label style="color: var(--text-muted); font-size: 11px; text-transform: uppercase; display: block; margin-bottom: 4px;">Tagline</label>
+                <input type="text" name="siteTagline" th:value="${siteTagline}"
+                       style="width: 100%; background: var(--surface); border: 1px solid var(--border-light); color: var(--text); padding: 8px 12px; font-family: inherit; font-size: 14px; border-radius: 3px;">
+            </div>
+            <div style="margin-bottom: 16px;">
+                <label style="color: var(--text-muted); font-size: 11px; text-transform: uppercase; display: block; margin-bottom: 4px;">Photo</label>
+                <div th:if="${photoPath != null and !photoPath.isEmpty()}" style="margin-bottom: 8px;">
+                    <img th:src="@{${photoPath}}" style="width: 80px; height: 80px; border-radius: 50%; border: 1px solid var(--border-light);">
+                </div>
+                <input type="file" name="photo" accept="image/*"
+                       style="color: var(--text-secondary); font-family: inherit; font-size: 13px;">
+            </div>
+            <button type="submit"
+                    style="color: var(--bg); font-size: 14px; background: var(--accent); padding: 8px 24px; border-radius: 3px; border: none; font-family: inherit; font-weight: bold; cursor: pointer;">
+                save settings
+            </button>
+        </form>
+    </div>
+</body>
+</html>

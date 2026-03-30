@@ -1,0 +1,38 @@
+<!DOCTYPE html>
+<html xmlns:th="http://www.thymeleaf.org">
+<body>
+<div th:fragment="content">
+    <div class="hero">
+        <img th:if="${photoPath != null and !photoPath.isEmpty()}"
+             th:src="@{${photoPath}}" alt="Photo" class="hero-photo">
+        <div>
+            <div class="hero-name" th:text="${siteName}">David Neto</div>
+            <div class="hero-tagline" th:text="${siteTagline}">Software Developer</div>
+            <div class="social-links">
+                <a th:each="link : ${socialLinks}"
+                   th:href="${link.url}"
+                   th:text="${link.displayName}"
+                   target="_blank"
+                   rel="noopener noreferrer"
+                   class="social-link"></a>
+            </div>
+        </div>
+    </div>
+
+    <div class="section" th:if="${not #lists.isEmpty(recentPosts)}">
+        <div class="section-header">~/blog $ ls -lt | head</div>
+        <div class="post-list">
+            <a th:each="post : ${recentPosts}"
+               th:href="@{/blog/{slug}(slug=${post.slug})}"
+               class="post-item">
+                <div class="post-title" th:text="${post.title}">Post Title</div>
+                <div class="post-meta">
+                    <span th:text="${#temporals.format(post.publishedAt, 'yyyy-MM-dd')}">2026-03-28</span>
+                    <span th:if="${post.tags != null and !post.tags.isEmpty()}"> &mdash; <span th:text="${post.tags}">tags</span></span>
+                </div>
+            </a>
+        </div>
+    </div>
+</div>
+</body>
+</html>

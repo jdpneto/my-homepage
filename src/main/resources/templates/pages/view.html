@@ -1,0 +1,14 @@
+<!DOCTYPE html>
+<html xmlns:th="http://www.thymeleaf.org">
+<body>
+<div th:fragment="content">
+    <div class="post-content">
+        <div class="section-header" th:text="'~/ $ cat pages/' + ${page.slug} + '.md'">~/ $ cat pages/page.md</div>
+
+        <h1 th:text="${page.title}" style="color: #fff; font-size: 22px; margin: 16px 0 24px;">Title</h1>
+
+        <div th:utext="${renderedContent}">Content here</div>
+    </div>
+</div>
+</body>
+</html>

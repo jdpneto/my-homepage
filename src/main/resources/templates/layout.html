@@ -1,0 +1,26 @@
+<!DOCTYPE html>
+<html xmlns:th="http://www.thymeleaf.org">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title th:text="${pageTitle != null ? pageTitle + ' — ' + siteName : siteName}">Homepage</title>
+    <link rel="stylesheet" th:href="@{/css/terminal.css}">
+</head>
+<body>
+    <nav class="nav">
+        <a href="/" class="nav-prompt" th:text="${siteName != null ? siteName.toLowerCase().replace(' ', '@') + ':~$' : 'user@home:~$'}">david@neto:~$</a>
+        <button class="nav-hamburger" onclick="document.querySelector('.nav-links').classList.toggle('open')">&#9776;</button>
+        <ul class="nav-links">
+            <li><a href="/" th:classappend="${currentPage == 'home' ? 'active' : ''}">home</a></li>
+            <li><a href="/blog" th:classappend="${currentPage == 'blog' ? 'active' : ''}">blog</a></li>
+        </ul>
+    </nav>
+
+    <main class="content" th:insert="~{${view} :: content}"></main>
+
+    <footer class="footer">
+        <span>MIT License</span>
+        <span>Built with Spring Boot</span>
+    </footer>
+</body>
+</html>

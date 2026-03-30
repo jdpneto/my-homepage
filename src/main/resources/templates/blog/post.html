@@ -1,0 +1,27 @@
+<!DOCTYPE html>
+<html xmlns:th="http://www.thymeleaf.org">
+<body>
+<div th:fragment="content">
+    <div class="post-content">
+        <div class="section-header" th:text="'~/blog $ cat ' + ${post.slug} + '.md'">~/blog $ cat post.md</div>
+
+        <h1 th:text="${post.title}" style="color: #fff; font-size: 22px; margin: 16px 0 8px;">Title</h1>
+        <div class="post-meta" style="margin-bottom: 24px;">
+            <span th:text="${#temporals.format(post.publishedAt, 'yyyy-MM-dd')}">2026-03-28</span>
+            <span th:if="${post.tags != null and !post.tags.isEmpty()}"> &mdash; <span th:text="${post.tags}">tags</span></span>
+        </div>
+
+        <div th:utext="${renderedContent}">Content here</div>
+
+        <div class="post-nav">
+            <span>
+                <a th:if="${prevPost != null}" th:href="@{/blog/{slug}(slug=${prevPost.slug})}">&#8592; <span th:text="${prevPost.title}">prev</span></a>
+            </span>
+            <span>
+                <a th:if="${nextPost != null}" th:href="@{/blog/{slug}(slug=${nextPost.slug})}"><span th:text="${nextPost.title}">next</span> &#8594;</a>
+            </span>
+        </div>
+    </div>
+</div>
+</body>
+</html>

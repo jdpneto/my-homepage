@@ -1,0 +1,30 @@
+<!DOCTYPE html>
+<html xmlns:th="http://www.thymeleaf.org">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Admin — Posts</title>
+    <link rel="stylesheet" th:href="@{/css/terminal.css}">
+</head>
+<body>
+    <nav th:replace="~{admin/fragments :: admin-nav('posts')}"></nav>
+    <div style="padding: 24px 32px;">
+        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px;">
+            <div class="section-header" style="margin-bottom: 0;">$ ls posts/</div>
+            <a href="/admin/posts/new" class="social-link" style="font-size: 13px;">+ new post</a>
+        </div>
+        <div class="post-list">
+            <a th:each="post : ${posts}"
+               th:href="@{/admin/posts/{id}/edit(id=${post.id})}"
+               class="post-item">
+                <div class="post-title" th:text="${post.title}">Post Title</div>
+                <div class="post-meta">
+                    <span th:text="${post.published ? 'published' : 'draft'}"
+                          th:style="${post.published ? 'color: var(--accent)' : 'color: var(--text-muted)'}">status</span>
+                    &mdash; <span th:text="${#temporals.format(post.updatedAt, 'MMM dd, yyyy')}">Mar 28, 2026</span>
+                </div>
+            </a>
+        </div>
+    </div>
+</body>
+</html>

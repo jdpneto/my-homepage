@@ -1,0 +1,17 @@
+spring:
+  datasource:
+    url: jdbc:postgresql://${DB_HOST:localhost}:${DB_PORT:5432}/${POSTGRES_DB:homepage}
+    username: ${POSTGRES_USER:homepage}
+    password: ${POSTGRES_PASSWORD:homepage}
+  jpa:
+    hibernate:
+      ddl-auto: validate
+    open-in-view: false
+  flyway:
+    enabled: true
+
+app:
+  admin:
+    username: ${ADMIN_USERNAME:admin}
+    password: ${ADMIN_PASSWORD:admin}
+  upload-dir: ${UPLOAD_DIR:./uploads}

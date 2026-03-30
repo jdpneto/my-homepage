@@ -1,0 +1,27 @@
+<!DOCTYPE html>
+<html xmlns:th="http://www.thymeleaf.org">
+<body>
+<div th:fragment="content">
+    <div class="section" style="padding-top: 24px;">
+        <div class="section-header">~/blog $ find . -name "*.md" | sort -r</div>
+
+        <div th:each="post : ${posts.content}" style="margin-bottom: 20px; padding-bottom: 20px; border-bottom: 1px solid #1a1a1a;">
+            <a th:href="@{/blog/{slug}(slug=${post.slug})}" style="text-decoration: none;">
+                <div class="post-title" th:text="${post.title}">Post Title</div>
+            </a>
+            <div class="post-meta">
+                <span th:text="${#temporals.format(post.publishedAt, 'yyyy-MM-dd')}">2026-03-28</span>
+                <span th:if="${post.tags != null and !post.tags.isEmpty()}"> &mdash; <span th:text="${post.tags}">tags</span></span>
+            </div>
+            <div class="post-excerpt" th:if="${post.excerpt != null}" th:text="${post.excerpt}">Excerpt here...</div>
+        </div>
+
+        <div class="pagination" th:if="${posts.totalPages > 1}">
+            <a th:if="${posts.number > 0}" th:href="@{/blog(page=${posts.number - 1})}">&#8592; prev</a>
+            <span th:text="'page ' + (${posts.number} + 1) + ' of ' + ${posts.totalPages}">page 1 of 3</span>
+            <a th:if="${posts.number < posts.totalPages - 1}" th:href="@{/blog(page=${posts.number + 1})}">next &#8594;</a>
+        </div>
+    </div>
+</div>
+</body>
+</html>
