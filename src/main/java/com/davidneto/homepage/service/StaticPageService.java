@@ -1,5 +1,6 @@
 package com.davidneto.homepage.service;
 
+import com.davidneto.homepage.entity.OwnerType;
 import com.davidneto.homepage.entity.StaticPage;
 import com.davidneto.homepage.repository.StaticPageRepository;
 import org.springframework.stereotype.Service;
@@ -12,9 +13,11 @@ import java.util.Optional;
 public class StaticPageService {
 
     private final StaticPageRepository staticPageRepository;
+    private final ImageService imageService;
 
-    public StaticPageService(StaticPageRepository staticPageRepository) {
+    public StaticPageService(StaticPageRepository staticPageRepository, ImageService imageService) {
         this.staticPageRepository = staticPageRepository;
+        this.imageService = imageService;
     }
 
     public Optional<StaticPage> getPublishedBySlug(String slug) {
@@ -40,6 +43,7 @@ public class StaticPageService {
     @Transactional
     public void delete(Long id) {
         StaticPage page = staticPageRepository.findById(id).orElseThrow();
+        imageService.deleteAllByOwner(OwnerType.STATIC_PAGE, id);
         staticPageRepository.delete(page);
     }
 }
