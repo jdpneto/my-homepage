@@ -78,13 +78,14 @@ public class ImageService {
         Path dir = Paths.get(uploadDir, "images", ownerType.name(), ownerId.toString());
         try {
             if (Files.exists(dir)) {
-                Files.walk(dir)
-                        .sorted(Comparator.reverseOrder())
-                        .forEach(path -> {
-                            try { Files.delete(path); } catch (IOException e) {
-                                log.warn("Failed to delete file: {}", path, e);
-                            }
-                        });
+                try (var paths = Files.walk(dir)) {
+                    paths.sorted(Comparator.reverseOrder())
+                            .forEach(path -> {
+                                try { Files.delete(path); } catch (IOException e) {
+                                    log.warn("Failed to delete file: {}", path, e);
+                                }
+                            });
+                }
             }
         } catch (IOException e) {
             log.warn("Failed to clean up image directory: {}", dir, e);
