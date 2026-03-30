@@ -1,6 +1,7 @@
 package com.davidneto.homepage.service;
 
 import com.davidneto.homepage.entity.BlogPost;
+import com.davidneto.homepage.entity.OwnerType;
 import com.davidneto.homepage.repository.BlogPostRepository;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
@@ -15,9 +16,11 @@ import java.util.Optional;
 public class BlogPostService {
 
     private final BlogPostRepository blogPostRepository;
+    private final ImageService imageService;
 
-    public BlogPostService(BlogPostRepository blogPostRepository) {
+    public BlogPostService(BlogPostRepository blogPostRepository, ImageService imageService) {
         this.blogPostRepository = blogPostRepository;
+        this.imageService = imageService;
     }
 
     public Page<BlogPost> getPublishedPosts(Pageable pageable) {
@@ -64,6 +67,7 @@ public class BlogPostService {
     @Transactional
     public void delete(Long id) {
         BlogPost post = blogPostRepository.findById(id).orElseThrow();
+        imageService.deleteAllByOwner(OwnerType.BLOG_POST, id);
         blogPostRepository.delete(post);
     }
 }
