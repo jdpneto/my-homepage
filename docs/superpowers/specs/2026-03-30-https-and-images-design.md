@@ -11,11 +11,19 @@ Two enhancements to the personal homepage:
 
 ### Caddyfile Changes
 
-Replace the current HTTP-only configuration:
+Generate a self-signed certificate with openssl and mount it into the Caddy container:
+
+```bash
+mkdir -p certs
+openssl req -x509 -newkey rsa:2048 -keyout certs/key.pem -out certs/cert.pem \
+  -days 365 -nodes -subj "/CN=localhost" -addext "subjectAltName=DNS:localhost,IP:127.0.0.1"
+```
+
+Caddyfile configuration:
 
 ```
 :443 {
-    tls internal
+    tls /etc/caddy/certs/cert.pem /etc/caddy/certs/key.pem
     reverse_proxy app:8080
 }
 
@@ -24,9 +32,18 @@ Replace the current HTTP-only configuration:
 }
 ```
 
-- `:443` with `tls internal` — Caddy auto-generates a self-signed certificate
+Docker Compose mounts the certs directory into the Caddy container as read-only:
+
+```yaml
+volumes:
+  - ./certs:/etc/caddy/certs:ro
+```
+
+Note: Caddy's `tls internal` was not used because it generates a CA certificate that browsers hard-reject with no bypass option. A standard openssl self-signed leaf certificate allows browsers to show the "Accept the Risk" prompt.
+
+- `:443` with mounted cert/key files — browsers show a bypassable security warning
 - `:80` redirects all HTTP traffic to HTTPS permanently
-- No changes to `docker-compose.yml` needed — ports 80 and 443 are already exposed
+- `certs/` is in `.gitignore` — private keys are not committed
 
 ### Switching to a Real Certificate (Future)
 
@@ -39,7 +56,7 @@ When a domain is available:
        reverse_proxy app:8080
    }
    ```
-   Remove `tls internal` and the `:80` redirect block — Caddy handles automatic HTTPS and HTTP→HTTPS redirection when given a real domain name.
+   Remove the `tls` directive, the `:80` redirect block, and the `certs` volume mount — Caddy handles automatic HTTPS and HTTP→HTTPS redirection when given a real domain name.
 3. Run `docker compose restart caddy`
 4. Caddy automatically provisions a Let's Encrypt certificate and handles renewal
 
