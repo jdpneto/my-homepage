@@ -103,7 +103,7 @@ class ImageApiControllerTest {
     @WithMockUser(roles = "ADMIN")
     void delete_removesImageAndReturnsOk() throws Exception {
         mockMvc.perform(delete("/admin/api/images/1").with(csrf()))
-                .andExpect(status().isOk());
+                .andExpect(status().isNoContent());
 
         verify(imageService).delete(1L);
     }
