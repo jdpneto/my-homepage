@@ -48,8 +48,12 @@ public class ImageApiController {
 
     @DeleteMapping("/{id}")
     public ResponseEntity<Void> delete(@PathVariable Long id) {
-        imageService.delete(id);
-        return ResponseEntity.ok().build();
+        try {
+            imageService.delete(id);
+            return ResponseEntity.noContent().build();
+        } catch (java.util.NoSuchElementException e) {
+            return ResponseEntity.notFound().build();
+        }
     }
 
     private Map<String, Object> toJson(Image image) {

@@ -20,6 +20,8 @@ import java.util.UUID;
 @Service
 public class ImageService {
 
+    private static final org.slf4j.Logger log = org.slf4j.LoggerFactory.getLogger(ImageService.class);
+
     private static final Set<String> ALLOWED_EXTENSIONS = Set.of(".jpg", ".jpeg", ".png", ".gif", ".webp");
 
     private final ImageRepository imageRepository;
@@ -65,7 +67,7 @@ public class ImageService {
         try {
             Files.deleteIfExists(filePath);
         } catch (IOException e) {
-            // Log but don't fail — DB record removal is more important
+            log.warn("Failed to delete image file: {}", filePath, e);
         }
         imageRepository.delete(image);
     }
@@ -79,11 +81,13 @@ public class ImageService {
                 Files.walk(dir)
                         .sorted(Comparator.reverseOrder())
                         .forEach(path -> {
-                            try { Files.delete(path); } catch (IOException ignored) {}
+                            try { Files.delete(path); } catch (IOException e) {
+                                log.warn("Failed to delete file: {}", path, e);
+                            }
                         });
             }
         } catch (IOException e) {
-            // Log but don't fail
+            log.warn("Failed to clean up image directory: {}", dir, e);
         }
     }
 
