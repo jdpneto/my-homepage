@@ -50,6 +50,18 @@
             </div>
         </form>
 
+        <div th:if="${post.id != null}" id="image-gallery-section"
+             th:data-owner-type="BLOG_POST" th:data-owner-id="${post.id}"
+             class="image-gallery-section" style="margin-top: 16px;">
+            <div class="image-gallery-header">
+                <span class="image-gallery-title">Images</span>
+                <button type="button" id="image-upload-btn" class="image-upload-btn">upload image</button>
+                <input type="file" id="image-file-input" accept=".jpg,.jpeg,.png,.gif,.webp" style="display:none;">
+            </div>
+            <div id="image-gallery-grid" class="image-gallery-grid"></div>
+        </div>
+        <div id="image-copied-toast" class="image-copied-toast"></div>
+
         <div th:if="${post.id != null}" style="margin-top: 24px; padding-top: 16px; border-top: 1px solid var(--border);">
             <form th:action="@{/admin/posts/{id}/delete(id=${post.id})}" method="post"
                   onsubmit="return confirm('Are you sure you want to delete this post?');">
@@ -62,5 +74,6 @@
     </div>
     <script src="https://cdn.jsdelivr.net/npm/easymde/dist/easymde.min.js"></script>
     <script th:src="@{/js/admin.js}"></script>
+    <script th:src="@{/js/image-gallery.js}"></script>
 </body>
 </html>
