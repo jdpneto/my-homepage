@@ -43,5 +43,8 @@ target/
 # Uploads
 uploads/
 
+# TLS certificates
+certs/
+
 # Superpowers
 .superpowers/

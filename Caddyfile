@@ -1,5 +1,5 @@
 :443 {
-    tls internal
+    tls /etc/caddy/certs/cert.pem /etc/caddy/certs/key.pem
     reverse_proxy app:8080
 }
 
