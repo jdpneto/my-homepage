@@ -242,6 +242,29 @@ a:hover {
     border-radius: 4px;
 }
 
+.post-content table {
+    width: 100%;
+    border-collapse: collapse;
+    margin: 16px 0;
+    font-size: 14px;
+}
+
+.post-content th, .post-content td {
+    border: 1px solid var(--border-light);
+    padding: 8px 12px;
+    text-align: left;
+}
+
+.post-content th {
+    background: var(--surface);
+    color: var(--accent);
+    font-weight: bold;
+}
+
+.post-content tr:hover {
+    background: var(--surface);
+}
+
 /* === Pagination === */
 .pagination {
     color: var(--text-muted);
