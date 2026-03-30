@@ -11,7 +11,7 @@
     <nav th:replace="~{admin/fragments :: admin-nav('posts')}"></nav>
     <div style="padding: 24px 32px;">
         <form th:action="${post.id != null ? '/admin/posts/' + post.id + '/edit' : '/admin/posts/new'}" method="post">
-            <div style="display: flex; gap: 12px; margin-bottom: 12px;">
+            <div style="display: flex; gap: 12px; margin-bottom: 12px; align-items: flex-end;">
                 <div style="flex: 1;">
                     <label style="color: var(--text-muted); font-size: 11px; text-transform: uppercase; display: block; margin-bottom: 4px;">Title</label>
                     <input type="text" name="title" th:value="${post.title}" required
@@ -22,6 +22,13 @@
                     <input type="text" name="slug" th:value="${post.slug}"
                            style="width: 100%; background: var(--surface); border: 1px solid var(--border-light); color: var(--text-secondary); padding: 8px 12px; font-family: inherit; font-size: 14px; border-radius: 3px;">
                 </div>
+                <a th:if="${post.slug != null}" th:href="@{/blog/{slug}(slug=${post.slug})}" target="_blank"
+                   id="post-link" title="Open post (right-click to copy link)"
+                   style="color: var(--accent); font-size: 13px; padding: 8px 12px; border: 1px solid var(--accent); border-radius: 3px; text-decoration: none; white-space: nowrap; font-family: inherit; cursor: pointer;"
+                   onmouseover="this.style.background='var(--accent)'; this.style.color='var(--bg)'"
+                   onmouseout="this.style.background='none'; this.style.color='var(--accent)'">
+                    /blog/<span th:text="${post.slug}"></span>
+                </a>
             </div>
             <div style="margin-bottom: 12px;">
                 <label style="color: var(--text-muted); font-size: 11px; text-transform: uppercase; display: block; margin-bottom: 4px;">Tags</label>
