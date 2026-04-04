@@ -3,5 +3,9 @@ davidneto.eu, www.davidneto.eu {
 }
 
 cloud.davidneto.eu {
-    reverse_proxy webdav:80
+    reverse_proxy webdav:80 {
+        header_up X-Forwarded-Proto {scheme}
+        header_up X-Forwarded-Host {host}
+    }
+    header Location http://cloud.davidneto.eu https://cloud.davidneto.eu
 }
