@@ -45,8 +45,19 @@ services:
       timeout: 5s
       retries: 5
 
+  webdav:
+    image: bytemark/webdav:latest
+    restart: unless-stopped
+    environment:
+      - AUTH_TYPE=Basic
+      - USERNAME=${WEBDAV_USERNAME}
+      - PASSWORD=${WEBDAV_PASSWORD}
+    volumes:
+      - webdav_data:/var/lib/dav
+
 volumes:
   pgdata:
   uploads:
   caddy_data:
   caddy_config:
+  webdav_data:
