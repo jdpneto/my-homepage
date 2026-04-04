@@ -5,6 +5,9 @@ services:
     ports:
       - "80:80"
       - "443:443"
+    environment:
+      - WEBDAV_USERNAME=${WEBDAV_USERNAME}
+      - WEBDAV_HASH=${WEBDAV_HASH}
     volumes:
       - ./Caddyfile:/etc/caddy/Caddyfile
       - caddy_data:/data
@@ -49,9 +52,9 @@ services:
     image: bytemark/webdav:latest
     restart: unless-stopped
     environment:
-      - AUTH_TYPE=Basic
-      - USERNAME=${WEBDAV_USERNAME}
-      - PASSWORD=${WEBDAV_PASSWORD}
+      # This tells WebDAV to allow all traffic, 
+      # but it's safe because Caddy is blocking the entrance
+      - ANONYMOUS_METHODS=ALL 
     volumes:
       - webdav_data:/var/lib/dav
 
