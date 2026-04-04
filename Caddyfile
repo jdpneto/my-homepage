@@ -3,11 +3,5 @@ davidneto.eu, www.davidneto.eu {
 }
 
 cloud.davidneto.eu {
-    basicauth {
-        {$WEBDAV_USERNAME} {$WEBDAV_HASH}
-    }
-    reverse_proxy webdav:80 {
-        # This stops the header leak!
-        header_up -Authorization
-    }
+    reverse_proxy webdav:80
 }

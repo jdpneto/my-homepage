@@ -52,9 +52,9 @@ services:
     image: bytemark/webdav:latest
     restart: unless-stopped
     environment:
-      # This tells WebDAV to allow all traffic, 
-      # but it's safe because Caddy is blocking the entrance
-      - ANONYMOUS_METHODS=ALL 
+      - AUTH_TYPE=Basic
+      - USERNAME=${WEBDAV_USERNAME}
+      - PASSWORD=${WEBDAV_PASSWORD}
     volumes:
       - webdav_data:/var/lib/dav
 
