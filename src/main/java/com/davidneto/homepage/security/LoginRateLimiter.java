@@ -60,9 +60,9 @@ public class LoginRateLimiter {
             UserCounter uc = existing == null ? new UserCounter() : existing;
             uc.consecutiveFailures++;
             uc.lastFailure = now;
-            if (uc.consecutiveFailures > props.userLockoutLongThreshold()) {
+            if (uc.consecutiveFailures >= props.userLockoutLongThreshold()) {
                 uc.lockedUntil = now.plusSeconds(props.userLockoutLongSeconds());
-            } else if (uc.consecutiveFailures > props.userLockoutThreshold()) {
+            } else if (uc.consecutiveFailures >= props.userLockoutThreshold()) {
                 uc.lockedUntil = now.plusSeconds(props.userLockoutShortSeconds());
             }
             return uc;

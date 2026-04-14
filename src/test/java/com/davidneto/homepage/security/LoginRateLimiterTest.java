@@ -38,8 +38,10 @@ class LoginRateLimiterTest {
         assertThat(blocked.kind()).isEqualTo(LoginRateLimiter.DecisionKind.BLOCK_IP);
         assertThat(blocked.retryAfterSeconds()).isBetween(1L, 60L);
 
+        // After window: IP cleared. Use a fresh username so we don't also
+        // trip the separate per-user lockout (which lasts 5 minutes).
         clock.advanceSeconds(61);
-        assertThat(limiter.check("1.2.3.4", "alice").kind())
+        assertThat(limiter.check("1.2.3.4", "someone-else").kind())
                 .isEqualTo(LoginRateLimiter.DecisionKind.ALLOW);
     }
 
