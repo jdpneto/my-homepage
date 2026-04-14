@@ -54,4 +54,57 @@ class LoginRateLimiterTest {
         assertThat(limiter.check("5.6.7.8", "bob").kind())
                 .isEqualTo(LoginRateLimiter.DecisionKind.ALLOW);
     }
+
+    @Test
+    void five_failures_locks_user_for_short_window() {
+        var clock = new MutableClock(Instant.parse("2026-04-14T10:00:00Z"));
+        var limiter = new LoginRateLimiter(PROPS, clock);
+
+        // Five failures from 5 different IPs so the IP window never trips.
+        for (int i = 0; i < 5; i++) {
+            limiter.recordFailure("10.0.0." + i, "alice");
+        }
+
+        var d = limiter.check("99.99.99.99", "alice");
+        assertThat(d.kind()).isEqualTo(LoginRateLimiter.DecisionKind.BLOCK_USER);
+        assertThat(d.retryAfterSeconds()).isBetween(1L, 300L);
+    }
+
+    @Test
+    void ten_failures_locks_user_for_long_window() {
+        var clock = new MutableClock(Instant.parse("2026-04-14T10:00:00Z"));
+        var limiter = new LoginRateLimiter(PROPS, clock);
+
+        for (int i = 0; i < 10; i++) {
+            limiter.recordFailure("10.0.0." + i, "alice");
+        }
+
+        var d = limiter.check("99.99.99.99", "alice");
+        assertThat(d.kind()).isEqualTo(LoginRateLimiter.DecisionKind.BLOCK_USER);
+        assertThat(d.retryAfterSeconds()).isBetween(301L, 1800L);
+    }
+
+    @Test
+    void success_clears_user_counter() {
+        var clock = new MutableClock(Instant.parse("2026-04-14T10:00:00Z"));
+        var limiter = new LoginRateLimiter(PROPS, clock);
+
+        for (int i = 0; i < 4; i++) {
+            limiter.recordFailure("10.0.0." + i, "alice");
+        }
+        limiter.recordSuccess("alice");
+
+        // User lockout cleared; IP window is unrelated (each call was from a unique IP).
+        assertThat(limiter.check("42.42.42.42", "alice").kind())
+                .isEqualTo(LoginRateLimiter.DecisionKind.ALLOW);
+    }
+
+    @Test
+    void username_key_is_case_insensitive_and_trimmed() {
+        var clock = new MutableClock(Instant.parse("2026-04-14T10:00:00Z"));
+        var limiter = new LoginRateLimiter(PROPS, clock);
+        for (int i = 0; i < 5; i++) limiter.recordFailure("10.0.0." + i, "Alice");
+        assertThat(limiter.check("77.77.77.77", "  alice  ").kind())
+                .isEqualTo(LoginRateLimiter.DecisionKind.BLOCK_USER);
+    }
 }
