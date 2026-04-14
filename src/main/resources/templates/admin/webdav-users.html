@@ -1,0 +1,65 @@
+<!DOCTYPE html>
+<html xmlns:th="http://www.thymeleaf.org">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Admin — WebDAV Users</title>
+    <link rel="stylesheet" th:href="@{/css/terminal.css}">
+</head>
+<body>
+<nav th:replace="~{admin/fragments :: admin-nav('webdav-users')}"></nav>
+<div style="padding: 24px 32px;">
+    <div class="section-header" style="margin-bottom: 16px;">$ ls webdav-users/</div>
+
+    <div th:if="${message}" style="color: var(--accent); margin-bottom: 12px;" th:text="${message}"></div>
+    <div th:if="${error}" style="color: #ff4444; margin-bottom: 12px;" th:text="${error}"></div>
+
+    <div class="post-list" th:if="${not #lists.isEmpty(users)}" style="margin-bottom: 24px;">
+        <div th:each="u : ${users}" class="post-item"
+             style="display: flex; justify-content: space-between; align-items: center; gap: 10px;">
+            <div>
+                <span class="post-title" th:text="${u.username}">alice</span>
+                <span class="post-meta" th:text="' — created ' + ${#temporals.format(u.createdAt, 'yyyy-MM-dd')}">2026-04-14</span>
+            </div>
+            <div style="display: flex; gap: 12px;">
+                <form th:action="@{/admin/webdav-users/{id}/reset-password(id=${u.id})}" method="post"
+                      style="display:flex; gap:6px; align-items:center;">
+                    <input type="hidden" th:name="${_csrf.parameterName}" th:value="${_csrf.token}">
+                    <input type="password" name="password" placeholder="new password" required minlength="8"
+                           style="background: var(--surface); border: 1px solid var(--border-light); color: var(--text); padding: 4px 8px; font-family: inherit; font-size: 12px; border-radius: 3px;">
+                    <button type="submit"
+                            style="color: var(--accent); background: none; border: none; font-family: inherit; font-size: 12px; cursor: pointer;">reset</button>
+                </form>
+                <form th:action="@{/admin/webdav-users/{id}/delete(id=${u.id})}" method="post" style="display:inline;">
+                    <input type="hidden" th:name="${_csrf.parameterName}" th:value="${_csrf.token}">
+                    <button type="submit"
+                            style="color: #ff4444; background: none; border: none; font-family: inherit; font-size: 12px; cursor: pointer;">delete</button>
+                </form>
+            </div>
+        </div>
+    </div>
+
+    <div style="border: 1px solid var(--border-light); border-radius: 4px; padding: 16px; margin-top: 16px;">
+        <div style="color: var(--accent); font-size: 13px; margin-bottom: 12px;">+ add new user</div>
+        <form th:action="@{/admin/webdav-users}" method="post"
+              style="display: flex; gap: 10px; flex-wrap: wrap; align-items: flex-end;">
+            <input type="hidden" th:name="${_csrf.parameterName}" th:value="${_csrf.token}">
+            <div>
+                <label style="color: var(--text-muted); font-size: 10px; text-transform: uppercase; display: block; margin-bottom: 4px;">Username</label>
+                <input type="text" name="username" required pattern="[a-zA-Z0-9_-]{1,64}" placeholder="alice"
+                       style="background: var(--surface); border: 1px solid var(--border-light); color: var(--text); padding: 6px 10px; font-family: inherit; font-size: 13px; border-radius: 3px; width: 160px;">
+            </div>
+            <div>
+                <label style="color: var(--text-muted); font-size: 10px; text-transform: uppercase; display: block; margin-bottom: 4px;">Password</label>
+                <input type="password" name="password" required minlength="8"
+                       style="background: var(--surface); border: 1px solid var(--border-light); color: var(--text); padding: 6px 10px; font-family: inherit; font-size: 13px; border-radius: 3px; width: 200px;">
+            </div>
+            <button type="submit"
+                    style="color: var(--bg); font-size: 13px; background: var(--accent); padding: 6px 16px; border-radius: 3px; border: none; font-family: inherit; font-weight: bold; cursor: pointer;">
+                add
+            </button>
+        </form>
+    </div>
+</div>
+</body>
+</html>
