@@ -112,4 +112,53 @@ class LoginRateLimiterTest {
         assertThat(limiter.check("77.77.77.77", "  alice  ").kind())
                 .isEqualTo(LoginRateLimiter.DecisionKind.BLOCK_USER);
     }
+
+    @Test
+    void concurrent_failures_are_counted_correctly() throws Exception {
+        var clock = new MutableClock(Instant.parse("2026-04-14T10:00:00Z"));
+        var limiter = new LoginRateLimiter(PROPS, clock);
+
+        int threads = 10, perThread = 100;
+        var pool = java.util.concurrent.Executors.newFixedThreadPool(threads);
+        var latch = new java.util.concurrent.CountDownLatch(threads);
+        for (int t = 0; t < threads; t++) {
+            final int tid = t;
+            pool.submit(() -> {
+                try {
+                    for (int i = 0; i < perThread; i++) {
+                        limiter.recordFailure("ip-" + tid + "-" + i, "alice");
+                    }
+                } finally { latch.countDown(); }
+            });
+        }
+        latch.await();
+        pool.shutdown();
+
+        // User has been locked (well above threshold).
+        assertThat(limiter.check("zzz", "alice").kind())
+                .isEqualTo(LoginRateLimiter.DecisionKind.BLOCK_USER);
+    }
+
+    @Test
+    void capacity_cap_evicts_oldest_ip_entries() {
+        var tight = new RateLimitProperties(5, 60, 5, 300, 10, 1800, /*max*/ 5, 600);
+        var clock = new MutableClock(Instant.parse("2026-04-14T10:00:00Z"));
+        var limiter = new LoginRateLimiter(tight, clock);
+        for (int i = 0; i < 10; i++) {
+            limiter.recordFailure("ip-" + i, "nobody");
+            clock.advanceSeconds(1);
+        }
+        assertThat(limiter.ipEntryCountForTesting()).isLessThanOrEqualTo(5);
+    }
+
+    @Test
+    void sweep_removes_expired_user_and_ip_entries() {
+        var clock = new MutableClock(Instant.parse("2026-04-14T10:00:00Z"));
+        var limiter = new LoginRateLimiter(PROPS, clock);
+        limiter.recordFailure("1.2.3.4", "alice");
+        clock.advanceSeconds(4000); // past any ip window and > 1h after last failure
+        limiter.sweep();
+        assertThat(limiter.ipEntryCountForTesting()).isZero();
+        assertThat(limiter.userEntryCountForTesting()).isZero();
+    }
 }

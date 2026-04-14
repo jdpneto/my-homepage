@@ -1,12 +1,17 @@
 package com.davidneto.homepage.security;
 
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
 
 import java.time.Clock;
 import java.time.Instant;
-import java.util.ArrayDeque;
 import java.util.Deque;
-import java.util.concurrent.ConcurrentHashMap;
+import java.util.Iterator;
+import java.util.LinkedHashMap;
+import java.util.Map;
+import java.util.concurrent.ConcurrentLinkedDeque;
 
 @Component
 public class LoginRateLimiter {
@@ -17,16 +22,18 @@ public class LoginRateLimiter {
         public static Decision allow() { return new Decision(DecisionKind.ALLOW, 0); }
     }
 
+    private static final Logger log = LoggerFactory.getLogger(LoginRateLimiter.class);
+
     private final RateLimitProperties props;
     private final Clock clock;
-    // Per-IP deque; access guarded by synchronized(deque). ConcurrentHashMap
-    // publishes the deque reference safely on put/compute.
-    private final ConcurrentHashMap<String, Deque<Instant>> ipAttempts = new ConcurrentHashMap<>();
 
-    // Per-username counter; writes via ConcurrentHashMap.compute are atomic
-    // per key. Volatile fields on UserCounter give reads from check() the
-    // latest-write visibility guarantee.
-    private final ConcurrentHashMap<String, UserCounter> userAttempts = new ConcurrentHashMap<>();
+    // LinkedHashMap(accessOrder=true) gives LRU semantics on get()/put().
+    // All access is guarded by the per-map monitor (this class's maps are
+    // synchronized on themselves).
+    private final LinkedHashMap<String, Deque<Instant>> ipAttempts =
+            new LinkedHashMap<>(256, 0.75f, true);
+    private final LinkedHashMap<String, UserCounter> userAttempts =
+            new LinkedHashMap<>(256, 0.75f, true);
 
     public LoginRateLimiter(RateLimitProperties props, Clock clock) {
         this.props = props;
@@ -35,9 +42,9 @@ public class LoginRateLimiter {
 
     public Decision check(String ip, String username) {
         Instant now = clock.instant();
-        Deque<Instant> window = ipAttempts.get(ip);
-        if (window != null) {
-            synchronized (window) {
+        synchronized (ipAttempts) {
+            Deque<Instant> window = ipAttempts.get(ip);
+            if (window != null) {
                 pruneIpWindow(window, now);
                 if (window.size() >= props.ipMaxFailures()) {
                     long retry = props.ipWindowSeconds()
@@ -48,10 +55,12 @@ public class LoginRateLimiter {
         }
         String key = normalize(username);
         if (!key.isEmpty()) {
-            UserCounter uc = userAttempts.get(key);
-            if (uc != null && uc.lockedUntil != null && uc.lockedUntil.isAfter(now)) {
-                long retry = uc.lockedUntil.getEpochSecond() - now.getEpochSecond();
-                return new Decision(DecisionKind.BLOCK_USER, Math.max(1, retry));
+            synchronized (userAttempts) {
+                UserCounter uc = userAttempts.get(key);
+                if (uc != null && uc.lockedUntil != null && uc.lockedUntil.isAfter(now)) {
+                    long retry = uc.lockedUntil.getEpochSecond() - now.getEpochSecond();
+                    return new Decision(DecisionKind.BLOCK_USER, Math.max(1, retry));
+                }
             }
         }
         return Decision.allow();
@@ -59,15 +68,28 @@ public class LoginRateLimiter {
 
     public void recordFailure(String ip, String username) {
         Instant now = clock.instant();
-        Deque<Instant> window = ipAttempts.computeIfAbsent(ip, k -> new ArrayDeque<>());
-        synchronized (window) {
+
+        synchronized (ipAttempts) {
+            Deque<Instant> window = ipAttempts.get(ip);
+            if (window == null) {
+                window = new ConcurrentLinkedDeque<>();
+                ipAttempts.put(ip, window);
+                enforceCap(ipAttempts);
+            }
             pruneIpWindow(window, now);
             window.addLast(now);
         }
+
         String key = normalize(username);
         if (key.isEmpty()) return;
-        userAttempts.compute(key, (k, existing) -> {
-            UserCounter uc = existing == null ? new UserCounter() : existing;
+
+        synchronized (userAttempts) {
+            UserCounter uc = userAttempts.get(key);
+            if (uc == null) {
+                uc = new UserCounter();
+                userAttempts.put(key, uc);
+                enforceCap(userAttempts);
+            }
             uc.consecutiveFailures++;
             uc.lastFailure = now;
             if (uc.consecutiveFailures >= props.userLockoutLongThreshold()) {
@@ -75,18 +97,61 @@ public class LoginRateLimiter {
             } else if (uc.consecutiveFailures >= props.userLockoutThreshold()) {
                 uc.lockedUntil = now.plusSeconds(props.userLockoutShortSeconds());
             }
-            return uc;
-        });
+        }
     }
 
     public void recordSuccess(String username) {
-        userAttempts.remove(normalize(username));
+        String key = normalize(username);
+        if (key.isEmpty()) return;
+        synchronized (userAttempts) {
+            userAttempts.remove(key);
+        }
+    }
+
+    @Scheduled(fixedDelayString = "${app.rate-limit.sweep-interval-seconds}000")
+    public void sweep() {
+        Instant now = clock.instant();
+        Instant ipCutoff = now.minusSeconds(props.ipWindowSeconds());
+        Instant userCutoff = now.minusSeconds(3600);
+
+        synchronized (ipAttempts) {
+            Iterator<Map.Entry<String, Deque<Instant>>> it = ipAttempts.entrySet().iterator();
+            while (it.hasNext()) {
+                Deque<Instant> w = it.next().getValue();
+                while (!w.isEmpty() && w.peekFirst().isBefore(ipCutoff)) w.pollFirst();
+                if (w.isEmpty()) it.remove();
+            }
+        }
+        synchronized (userAttempts) {
+            userAttempts.entrySet().removeIf(e -> {
+                UserCounter uc = e.getValue();
+                boolean notLocked = uc.lockedUntil == null || uc.lockedUntil.isBefore(now);
+                boolean stale = uc.lastFailure == null || uc.lastFailure.isBefore(userCutoff);
+                return notLocked && stale;
+            });
+        }
+    }
+
+    // package-private test accessors
+    int ipEntryCountForTesting() {
+        synchronized (ipAttempts) { return ipAttempts.size(); }
+    }
+    int userEntryCountForTesting() {
+        synchronized (userAttempts) { return userAttempts.size(); }
     }
 
     private void pruneIpWindow(Deque<Instant> window, Instant now) {
         Instant cutoff = now.minusSeconds(props.ipWindowSeconds());
-        while (!window.isEmpty() && window.peekFirst().isBefore(cutoff)) {
-            window.pollFirst();
+        while (!window.isEmpty() && window.peekFirst().isBefore(cutoff)) window.pollFirst();
+    }
+
+    private <K, V> void enforceCap(LinkedHashMap<K, V> map) {
+        if (map.size() <= props.maxEntries()) return;
+        Iterator<Map.Entry<K, V>> it = map.entrySet().iterator();
+        while (it.hasNext() && map.size() > props.maxEntries()) {
+            it.next();
+            it.remove();
+            log.debug("rate-limiter evicted oldest entry (over cap)");
         }
     }
 
