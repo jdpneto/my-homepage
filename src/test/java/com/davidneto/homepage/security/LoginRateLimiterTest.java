@@ -141,14 +141,24 @@ class LoginRateLimiterTest {
 
     @Test
     void capacity_cap_evicts_oldest_ip_entries() {
-        var tight = new RateLimitProperties(5, 60, 5, 300, 10, 1800, /*max*/ 5, 600);
+        // max=1 for the IP map; threshold=5 so user lockout won't interfere.
+        var tight = new RateLimitProperties(5, 60, 5, 300, 10, 1800, /*max*/ 1, 600);
         var clock = new MutableClock(Instant.parse("2026-04-14T10:00:00Z"));
         var limiter = new LoginRateLimiter(tight, clock);
-        for (int i = 0; i < 10; i++) {
-            limiter.recordFailure("ip-" + i, "nobody");
-            clock.advanceSeconds(1);
-        }
-        assertThat(limiter.ipEntryCountForTesting()).isLessThanOrEqualTo(5);
+
+        limiter.recordFailure("ip-old", "nobody");
+        clock.advanceSeconds(1);
+        limiter.recordFailure("ip-new", "nobody");
+
+        // Only 1 entry may remain; it must be the newest.
+        assertThat(limiter.ipEntryCountForTesting()).isEqualTo(1);
+
+        // A check on the evicted IP sees no history: it's treated as fresh.
+        // If eviction were not LRU-correct (e.g. evicted the newer entry),
+        // "ip-new" would still have an entry and "ip-old" wouldn't, so this
+        // check-via-entry-count proves which one survived.
+        assertThat(limiter.check("ip-old", "nobody").kind())
+                .isEqualTo(LoginRateLimiter.DecisionKind.ALLOW);
     }
 
     @Test

@@ -24,6 +24,11 @@ public class LoginRateLimiter {
 
     private static final Logger log = LoggerFactory.getLogger(LoginRateLimiter.class);
 
+    // User counters are swept if they haven't had a failure in this long
+    // AND they aren't currently locked. Not exposed as a property because
+    // it's purely a memory-housekeeping knob, not a security-tunable one.
+    private static final long USER_STALE_SECONDS = 3600;
+
     private final RateLimitProperties props;
     private final Clock clock;
 
@@ -112,7 +117,7 @@ public class LoginRateLimiter {
     public void sweep() {
         Instant now = clock.instant();
         Instant ipCutoff = now.minusSeconds(props.ipWindowSeconds());
-        Instant userCutoff = now.minusSeconds(3600);
+        Instant userCutoff = now.minusSeconds(USER_STALE_SECONDS);
 
         synchronized (ipAttempts) {
             Iterator<Map.Entry<String, Deque<Instant>>> it = ipAttempts.entrySet().iterator();
@@ -160,8 +165,9 @@ public class LoginRateLimiter {
     }
 
     private static class UserCounter {
-        volatile int consecutiveFailures;
-        volatile Instant lastFailure;
-        volatile Instant lockedUntil;
+        // Mutated and read only under synchronized (userAttempts) in the enclosing class.
+        int consecutiveFailures;
+        Instant lastFailure;
+        Instant lockedUntil;
     }
 }
