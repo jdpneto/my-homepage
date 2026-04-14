@@ -94,7 +94,12 @@ class LoginRateLimiterTest {
         }
         limiter.recordSuccess("alice");
 
-        // User lockout cleared; IP window is unrelated (each call was from a unique IP).
+        // If the counter wasn't reset, these 4 additional failures would push it
+        // to 8 (>= threshold of 5) and lock the user. Since recordSuccess cleared
+        // the counter, we're back at 4 failures, below the threshold.
+        for (int i = 4; i < 8; i++) {
+            limiter.recordFailure("10.0.0." + i, "alice");
+        }
         assertThat(limiter.check("42.42.42.42", "alice").kind())
                 .isEqualTo(LoginRateLimiter.DecisionKind.ALLOW);
     }
