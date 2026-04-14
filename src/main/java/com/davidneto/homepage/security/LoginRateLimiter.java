@@ -144,6 +144,10 @@ public class LoginRateLimiter {
     int userEntryCountForTesting() {
         synchronized (userAttempts) { return userAttempts.size(); }
     }
+    public void resetAllForTesting() {
+        synchronized (ipAttempts) { ipAttempts.clear(); }
+        synchronized (userAttempts) { userAttempts.clear(); }
+    }
 
     private void pruneIpWindow(Deque<Instant> window, Instant now) {
         Instant cutoff = now.minusSeconds(props.ipWindowSeconds());
