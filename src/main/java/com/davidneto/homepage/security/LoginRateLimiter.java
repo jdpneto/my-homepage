@@ -19,7 +19,13 @@ public class LoginRateLimiter {
 
     private final RateLimitProperties props;
     private final Clock clock;
+    // Per-IP deque; access guarded by synchronized(deque). ConcurrentHashMap
+    // publishes the deque reference safely on put/compute.
     private final ConcurrentHashMap<String, Deque<Instant>> ipAttempts = new ConcurrentHashMap<>();
+
+    // Per-username counter; writes via ConcurrentHashMap.compute are atomic
+    // per key. Volatile fields on UserCounter give reads from check() the
+    // latest-write visibility guarantee.
     private final ConcurrentHashMap<String, UserCounter> userAttempts = new ConcurrentHashMap<>();
 
     public LoginRateLimiter(RateLimitProperties props, Clock clock) {
@@ -40,10 +46,13 @@ public class LoginRateLimiter {
                 }
             }
         }
-        UserCounter uc = userAttempts.get(normalize(username));
-        if (uc != null && uc.lockedUntil != null && uc.lockedUntil.isAfter(now)) {
-            long retry = uc.lockedUntil.getEpochSecond() - now.getEpochSecond();
-            return new Decision(DecisionKind.BLOCK_USER, Math.max(1, retry));
+        String key = normalize(username);
+        if (!key.isEmpty()) {
+            UserCounter uc = userAttempts.get(key);
+            if (uc != null && uc.lockedUntil != null && uc.lockedUntil.isAfter(now)) {
+                long retry = uc.lockedUntil.getEpochSecond() - now.getEpochSecond();
+                return new Decision(DecisionKind.BLOCK_USER, Math.max(1, retry));
+            }
         }
         return Decision.allow();
     }
@@ -56,6 +65,7 @@ public class LoginRateLimiter {
             window.addLast(now);
         }
         String key = normalize(username);
+        if (key.isEmpty()) return;
         userAttempts.compute(key, (k, existing) -> {
             UserCounter uc = existing == null ? new UserCounter() : existing;
             uc.consecutiveFailures++;
@@ -85,8 +95,8 @@ public class LoginRateLimiter {
     }
 
     private static class UserCounter {
-        int consecutiveFailures;
-        Instant lastFailure;
-        Instant lockedUntil;
+        volatile int consecutiveFailures;
+        volatile Instant lastFailure;
+        volatile Instant lockedUntil;
     }
 }
