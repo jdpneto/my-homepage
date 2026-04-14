@@ -84,7 +84,7 @@ git reset --hard origin/main
 
 if [ "$MODE" = "full" ]; then
     echo ">>> compose down"
-    docker compose down
+    docker-compose down
     echo ">>> wiping data volumes (keeping caddy_data)"
     for v in "${COMPOSE_PROJECT}_pgdata" "${COMPOSE_PROJECT}_uploads" "${COMPOSE_PROJECT}_webdav_data"; do
         docker volume rm "$v" 2>/dev/null && echo "  removed $v" || echo "  $v: not present"
@@ -92,22 +92,22 @@ if [ "$MODE" = "full" ]; then
 fi
 
 echo ">>> pulling base images (caddy, postgres)"
-docker compose pull caddy postgres
+docker-compose pull caddy postgres
 
 echo ">>> rebuilding app image (no cache)"
-docker compose build --no-cache app
+docker-compose build --no-cache app
 
 echo ">>> starting stack"
-docker compose up -d
+docker-compose up -d
 
 echo ">>> waiting for services to settle"
 sleep 8
 
 echo ">>> compose ps"
-docker compose ps
+docker-compose ps
 
 echo ">>> last 40 lines of app logs"
-docker compose logs --tail=40 app
+docker-compose logs --tail=40 app
 REMOTE
 
 echo ""
