@@ -2,6 +2,7 @@ package com.davidneto.homepage.controller;
 
 import com.davidneto.homepage.config.SecurityConfig;
 import com.davidneto.homepage.entity.StaticPage;
+import com.davidneto.homepage.security.LoginRateLimiter;
 import com.davidneto.homepage.service.MarkdownService;
 import com.davidneto.homepage.service.SiteConfigService;
 import com.davidneto.homepage.service.StaticPageService;
@@ -29,6 +30,9 @@ class PageControllerTest {
 
     @Autowired
     private MockMvc mockMvc;
+
+    @MockitoBean
+    private LoginRateLimiter loginRateLimiter;
 
     @MockitoBean
     private StaticPageService staticPageService;

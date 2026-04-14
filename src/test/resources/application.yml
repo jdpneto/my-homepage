@@ -20,3 +20,14 @@ app:
     username: admin
     password: testpass
   upload-dir: /tmp/homepage-test-uploads
+  webdav:
+    root-dir: /tmp/homepage-test-webdav
+  rate-limit:
+    ip-max-failures: 5
+    ip-window-seconds: 60
+    user-lockout-threshold: 5
+    user-lockout-short-seconds: 300
+    user-lockout-long-threshold: 10
+    user-lockout-long-seconds: 1800
+    max-entries: 10000
+    sweep-interval-seconds: 600

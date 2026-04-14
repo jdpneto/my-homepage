@@ -3,6 +3,7 @@ package com.davidneto.homepage.controller;
 import com.davidneto.homepage.config.SecurityConfig;
 import com.davidneto.homepage.entity.BlogPost;
 import com.davidneto.homepage.entity.StaticPage;
+import com.davidneto.homepage.security.LoginRateLimiter;
 import com.davidneto.homepage.service.*;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -34,6 +35,9 @@ class AdminControllerTest {
 
     @Autowired
     private MockMvc mockMvc;
+
+    @MockitoBean
+    private LoginRateLimiter loginRateLimiter;
 
     @MockitoBean
     private BlogPostService blogPostService;
