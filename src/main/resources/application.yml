@@ -1,3 +1,6 @@
+server:
+  forward-headers-strategy: NATIVE
+
 spring:
   datasource:
     url: jdbc:postgresql://${DB_HOST:localhost}:${DB_PORT:5432}/${POSTGRES_DB:homepage}
@@ -19,3 +22,14 @@ app:
     username: ${ADMIN_USERNAME:admin}
     password: ${ADMIN_PASSWORD:admin}
   upload-dir: ${UPLOAD_DIR:./uploads}
+  webdav:
+    root-dir: ${WEBDAV_ROOT_DIR:./webdav}
+  rate-limit:
+    ip-max-failures: 5
+    ip-window-seconds: 60
+    user-lockout-threshold: 5
+    user-lockout-short-seconds: 300
+    user-lockout-long-threshold: 10
+    user-lockout-long-seconds: 1800
+    max-entries: 10000
+    sweep-interval-seconds: 600
