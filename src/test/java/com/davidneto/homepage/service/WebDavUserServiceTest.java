@@ -64,4 +64,21 @@ class WebDavUserServiceTest {
         assertThat(service.list()).extracting(WebDavUser::getUsername)
                 .containsSubsequence("amy", "zoe");
     }
+
+    @Test
+    void delete_rejects_unknown_id() {
+        assertThatThrownBy(() -> service.delete(999_999L))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("unknown user id");
+    }
+
+    @Test
+    void reset_password_rejects_unknown_id_before_password_validation() {
+        // Short password would fail validation, but we expect the unknown-id
+        // error to surface first so the endpoint doesn't leak the user absence
+        // only when the password happens to be valid.
+        assertThatThrownBy(() -> service.resetPassword(999_999L, "short"))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("unknown user id");
+    }
 }

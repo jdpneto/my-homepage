@@ -25,6 +25,11 @@ public class WebDavSecurityManager implements SecurityManager {
     private final WebDavUserService users;
     private final PasswordEncoder encoder;
     private final LoginRateLimiter limiter;
+    // Pre-computed BCrypt hash used to equalize timing when the requested user
+    // does not exist. Without this, an unknown-user lookup returns in ~5ms
+    // while a known-user BCrypt verify takes ~100ms, enabling username
+    // enumeration via response-time analysis.
+    private final String dummyPasswordHash;
 
     public WebDavSecurityManager(WebDavUserService users,
                                  PasswordEncoder encoder,
@@ -32,6 +37,7 @@ public class WebDavSecurityManager implements SecurityManager {
         this.users = users;
         this.encoder = encoder;
         this.limiter = limiter;
+        this.dummyPasswordHash = encoder.encode("dummy-timing-equalizer");
     }
 
     @Override
@@ -45,7 +51,11 @@ public class WebDavSecurityManager implements SecurityManager {
             return null;
         }
         var found = users.findByUsername(user);
-        if (found.isEmpty() || !encoder.matches(password, found.get().getPasswordHash())) {
+        // Always run BCrypt, even for unknown users, to avoid user enumeration
+        // via response timing. The dummy hash guarantees matches() returns false.
+        String hash = found.isPresent() ? found.get().getPasswordHash() : dummyPasswordHash;
+        boolean passwordOk = encoder.matches(password, hash);
+        if (found.isEmpty() || !passwordOk) {
             limiter.recordFailure(ip, user == null ? "" : user);
             log.warn("webdav login failure ip={} user={}", ip, user);
             return null;

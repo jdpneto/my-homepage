@@ -36,15 +36,18 @@ public class WebDavUserService {
 
     @Transactional
     public void resetPassword(Long id, String rawPassword) {
-        validatePassword(rawPassword);
         WebDavUser u = repo.findById(id).orElseThrow(
                 () -> new IllegalArgumentException("unknown user id: " + id));
+        validatePassword(rawPassword);
         u.setPasswordHash(encoder.encode(rawPassword));
         repo.save(u);
     }
 
     @Transactional
     public void delete(Long id) {
+        if (!repo.existsById(id)) {
+            throw new IllegalArgumentException("unknown user id: " + id);
+        }
         repo.deleteById(id);
     }
 

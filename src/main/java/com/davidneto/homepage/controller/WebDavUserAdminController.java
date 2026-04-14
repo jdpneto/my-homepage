@@ -50,9 +50,13 @@ public class WebDavUserAdminController {
 
     @PostMapping("/{id}/delete")
     public String delete(@PathVariable Long id, RedirectAttributes redirect) {
-        service.delete(id);
-        redirect.addFlashAttribute("message",
-                "User deleted. Files in the user's directory are left on disk.");
+        try {
+            service.delete(id);
+            redirect.addFlashAttribute("message",
+                    "User deleted. Files in the user's directory are left on disk.");
+        } catch (IllegalArgumentException e) {
+            redirect.addFlashAttribute("error", e.getMessage());
+        }
         return "redirect:/admin/webdav-users";
     }
 }

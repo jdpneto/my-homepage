@@ -12,6 +12,7 @@ import java.util.Iterator;
 import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.concurrent.ConcurrentLinkedDeque;
+import java.util.concurrent.TimeUnit;
 
 @Component
 public class LoginRateLimiter {
@@ -113,7 +114,7 @@ public class LoginRateLimiter {
         }
     }
 
-    @Scheduled(fixedDelayString = "${app.rate-limit.sweep-interval-seconds}000")
+    @Scheduled(fixedDelayString = "${app.rate-limit.sweep-interval-seconds}", timeUnit = TimeUnit.SECONDS)
     public void sweep() {
         Instant now = clock.instant();
         Instant ipCutoff = now.minusSeconds(props.ipWindowSeconds());
@@ -144,6 +145,14 @@ public class LoginRateLimiter {
     int userEntryCountForTesting() {
         synchronized (userAttempts) { return userAttempts.size(); }
     }
+
+    /**
+     * Test-only. Clears all state so shared-context integration tests can start
+     * from a clean slate. {@code public} (not package-private) because tests
+     * that depend on this live in sibling packages (e.g.
+     * {@code com.davidneto.homepage.webdav}). Treat as a VisibleForTesting API —
+     * do not call from production code.
+     */
     public void resetAllForTesting() {
         synchronized (ipAttempts) { ipAttempts.clear(); }
         synchronized (userAttempts) { userAttempts.clear(); }
