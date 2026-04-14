@@ -1,6 +1,7 @@
 package com.davidneto.homepage.controller;
 
 import com.davidneto.homepage.config.SecurityConfig;
+import com.davidneto.homepage.security.LoginRateLimiter;
 import com.davidneto.homepage.service.BlogPostService;
 import com.davidneto.homepage.service.SiteConfigService;
 import com.davidneto.homepage.service.SocialLinkService;
@@ -30,6 +31,9 @@ class HomeControllerTest {
 
     @Autowired
     private MockMvc mockMvc;
+
+    @MockitoBean
+    private LoginRateLimiter loginRateLimiter;
 
     @MockitoBean
     private BlogPostService blogPostService;

@@ -5,9 +5,6 @@ services:
     ports:
       - "80:80"
       - "443:443"
-    environment:
-      - WEBDAV_USERNAME=${WEBDAV_USERNAME}
-      - WEBDAV_HASH=${WEBDAV_HASH}
     volumes:
       - ./Caddyfile:/etc/caddy/Caddyfile
       - caddy_data:/data
@@ -27,8 +24,10 @@ services:
       - ADMIN_USERNAME=${ADMIN_USERNAME}
       - ADMIN_PASSWORD=${ADMIN_PASSWORD}
       - UPLOAD_DIR=/app/uploads
+      - WEBDAV_ROOT_DIR=/app/webdav
     volumes:
       - uploads:/app/uploads
+      - webdav_data:/app/webdav
     depends_on:
       postgres:
         condition: service_healthy
@@ -47,16 +46,6 @@ services:
       interval: 5s
       timeout: 5s
       retries: 5
-
-  webdav:
-    image: bytemark/webdav:latest
-    restart: unless-stopped
-    environment:
-      - AUTH_TYPE=Basic
-      - USERNAME=${WEBDAV_USERNAME}
-      - PASSWORD=${WEBDAV_PASSWORD}
-    volumes:
-      - webdav_data:/var/lib/dav
 
 volumes:
   pgdata:

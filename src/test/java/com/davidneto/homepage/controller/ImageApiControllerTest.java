@@ -2,6 +2,7 @@ package com.davidneto.homepage.controller;
 
 import com.davidneto.homepage.config.SecurityConfig;
 import com.davidneto.homepage.entity.Image;
+import com.davidneto.homepage.security.LoginRateLimiter;
 import com.davidneto.homepage.entity.OwnerType;
 import com.davidneto.homepage.service.ImageService;
 import org.junit.jupiter.api.Test;
@@ -35,6 +36,9 @@ class ImageApiControllerTest {
 
     @Autowired
     private MockMvc mockMvc;
+
+    @MockitoBean
+    private LoginRateLimiter loginRateLimiter;
 
     @MockitoBean
     private ImageService imageService;
