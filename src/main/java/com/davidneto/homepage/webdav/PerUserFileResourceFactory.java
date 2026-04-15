@@ -27,11 +27,16 @@ import java.io.File;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
+import java.io.UncheckedIOException;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.util.Collections;
+import java.util.Comparator;
 import java.util.Date;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.stream.Stream;
 
 /**
  * Per-user WebDAV root. Before auth is established, returns a proxy resource
@@ -72,6 +77,44 @@ public class PerUserFileResourceFactory implements ResourceFactory {
         // authenticates via the real SecurityManager and delegates all operations to
         // the per-user factory once the principal is resolved.
         return new ProxyResource(host, path);
+    }
+
+    /**
+     * Recursively delete the user's root directory. Evicts the cached per-user
+     * factory so a subsequent request (or a recreated user with the same name)
+     * sees a fresh, empty directory.
+     *
+     * Defends against path traversal by resolving the candidate directory
+     * canonically and verifying it is a direct child of the configured root.
+     */
+    public void clearUserData(String username) {
+        File root = new File(rootDir);
+        File userRoot = new File(root, username);
+        File canonicalRoot;
+        File canonicalUserRoot;
+        try {
+            canonicalRoot = root.getCanonicalFile();
+            canonicalUserRoot = userRoot.getCanonicalFile();
+        } catch (IOException e) {
+            throw new UncheckedIOException(e);
+        }
+        File userParent = canonicalUserRoot.getParentFile();
+        if (userParent == null || !userParent.equals(canonicalRoot)) {
+            throw new IllegalArgumentException("invalid username: " + username);
+        }
+        perUser.remove(username);
+        if (!canonicalUserRoot.exists()) return;
+        try (Stream<Path> s = Files.walk(canonicalUserRoot.toPath())) {
+            s.sorted(Comparator.reverseOrder()).forEach(p -> {
+                try {
+                    Files.deleteIfExists(p);
+                } catch (IOException e) {
+                    throw new UncheckedIOException(e);
+                }
+            });
+        } catch (IOException e) {
+            throw new UncheckedIOException(e);
+        }
     }
 
     private FileSystemResourceFactory buildFactory(String username) {

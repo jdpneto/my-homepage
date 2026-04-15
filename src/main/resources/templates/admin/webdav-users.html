@@ -21,7 +21,7 @@
                 <span class="post-title" th:text="${u.username}">alice</span>
                 <span class="post-meta" th:text="' — created ' + ${#temporals.format(u.createdAt, 'yyyy-MM-dd')}">2026-04-14</span>
             </div>
-            <div style="display: flex; gap: 12px;">
+            <div style="display: flex; gap: 12px; align-items: center;">
                 <form th:action="@{/admin/webdav-users/{id}/reset-password(id=${u.id})}" method="post"
                       style="display:flex; gap:6px; align-items:center;">
                     <input type="hidden" th:name="${_csrf.parameterName}" th:value="${_csrf.token}">
@@ -30,7 +30,14 @@
                     <button type="submit"
                             style="color: var(--accent); background: none; border: none; font-family: inherit; font-size: 12px; cursor: pointer;">reset</button>
                 </form>
-                <form th:action="@{/admin/webdav-users/{id}/delete(id=${u.id})}" method="post" style="display:inline;">
+                <form th:action="@{/admin/webdav-users/{id}/clear-data(id=${u.id})}" method="post" style="display:inline;"
+                      th:attr="onsubmit=|return confirm('Delete all files for ${u.username}? This cannot be undone.')|">
+                    <input type="hidden" th:name="${_csrf.parameterName}" th:value="${_csrf.token}">
+                    <button type="submit"
+                            style="color: #ffaa00; background: none; border: none; font-family: inherit; font-size: 12px; cursor: pointer;">clear data</button>
+                </form>
+                <form th:action="@{/admin/webdav-users/{id}/delete(id=${u.id})}" method="post" style="display:inline;"
+                      th:attr="onsubmit=|return confirm('Delete user ${u.username} and all their files? This cannot be undone.')|">
                     <input type="hidden" th:name="${_csrf.parameterName}" th:value="${_csrf.token}">
                     <button type="submit"
                             style="color: #ff4444; background: none; border: none; font-family: inherit; font-size: 12px; cursor: pointer;">delete</button>

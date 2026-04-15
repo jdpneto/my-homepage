@@ -52,10 +52,24 @@ public class WebDavUserAdminController {
     public String delete(@PathVariable Long id, RedirectAttributes redirect) {
         try {
             service.delete(id);
-            redirect.addFlashAttribute("message",
-                    "User deleted. Files in the user's directory are left on disk.");
+            redirect.addFlashAttribute("message", "User and their files deleted.");
         } catch (IllegalArgumentException e) {
             redirect.addFlashAttribute("error", e.getMessage());
+        } catch (RuntimeException e) {
+            redirect.addFlashAttribute("error", "could not delete user files: " + e.getMessage());
+        }
+        return "redirect:/admin/webdav-users";
+    }
+
+    @PostMapping("/{id}/clear-data")
+    public String clearData(@PathVariable Long id, RedirectAttributes redirect) {
+        try {
+            service.clearData(id);
+            redirect.addFlashAttribute("message", "User's files cleared.");
+        } catch (IllegalArgumentException e) {
+            redirect.addFlashAttribute("error", e.getMessage());
+        } catch (RuntimeException e) {
+            redirect.addFlashAttribute("error", "could not clear user files: " + e.getMessage());
         }
         return "redirect:/admin/webdav-users";
     }

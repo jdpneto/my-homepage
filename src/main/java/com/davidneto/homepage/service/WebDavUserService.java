@@ -2,6 +2,7 @@ package com.davidneto.homepage.service;
 
 import com.davidneto.homepage.entity.WebDavUser;
 import com.davidneto.homepage.repository.WebDavUserRepository;
+import com.davidneto.homepage.webdav.PerUserFileResourceFactory;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -18,10 +19,14 @@ public class WebDavUserService {
 
     private final WebDavUserRepository repo;
     private final PasswordEncoder encoder;
+    private final PerUserFileResourceFactory storage;
 
-    public WebDavUserService(WebDavUserRepository repo, PasswordEncoder encoder) {
+    public WebDavUserService(WebDavUserRepository repo,
+                             PasswordEncoder encoder,
+                             PerUserFileResourceFactory storage) {
         this.repo = repo;
         this.encoder = encoder;
+        this.storage = storage;
     }
 
     @Transactional
@@ -45,10 +50,21 @@ public class WebDavUserService {
 
     @Transactional
     public void delete(Long id) {
-        if (!repo.existsById(id)) {
-            throw new IllegalArgumentException("unknown user id: " + id);
-        }
+        WebDavUser u = repo.findById(id).orElseThrow(
+                () -> new IllegalArgumentException("unknown user id: " + id));
+        // Wipe files first: if disk deletion fails we abort without committing
+        // the DB row removal, so the admin can retry rather than end up with
+        // a deleted account whose data is still on disk for the next user
+        // registered under the same name.
+        storage.clearUserData(u.getUsername());
         repo.deleteById(id);
+    }
+
+    @Transactional
+    public void clearData(Long id) {
+        WebDavUser u = repo.findById(id).orElseThrow(
+                () -> new IllegalArgumentException("unknown user id: " + id));
+        storage.clearUserData(u.getUsername());
     }
 
     public List<WebDavUser> list() {
