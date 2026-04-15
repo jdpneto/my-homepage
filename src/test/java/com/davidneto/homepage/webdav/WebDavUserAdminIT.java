@@ -41,6 +41,9 @@ class WebDavUserAdminIT {
                         .param("password", "new-password-abc"))
                 .andExpect(status().is3xxRedirection());
 
+        mvc.perform(post("/admin/webdav-users/" + id + "/clear-data").with(csrf()))
+                .andExpect(status().is3xxRedirection());
+
         mvc.perform(post("/admin/webdav-users/" + id + "/delete").with(csrf()))
                 .andExpect(status().is3xxRedirection());
 
