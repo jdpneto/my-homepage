@@ -162,6 +162,30 @@ class LoginRateLimiterTest {
     }
 
     @Test
+    void null_or_blank_ip_skips_ip_tier_but_still_counts_per_user() {
+        var clock = new MutableClock(Instant.parse("2026-04-14T10:00:00Z"));
+        var limiter = new LoginRateLimiter(PROPS, clock);
+
+        for (int i = 0; i < 5; i++) {
+            limiter.recordFailure(null, "alice");
+        }
+        for (int i = 0; i < 3; i++) {
+            limiter.recordFailure("", "alice");
+        }
+
+        // No IP bucket was created under a sentinel (null/empty).
+        assertThat(limiter.ipEntryCountForTesting()).isZero();
+
+        // Per-user lockout still applies — 8 failures is above the 5-failure threshold.
+        assertThat(limiter.check(null, "alice").kind())
+                .isEqualTo(LoginRateLimiter.DecisionKind.BLOCK_USER);
+
+        // A different user, still with no IP, is unaffected.
+        assertThat(limiter.check(null, "bob").kind())
+                .isEqualTo(LoginRateLimiter.DecisionKind.ALLOW);
+    }
+
+    @Test
     void sweep_removes_expired_user_and_ip_entries() {
         var clock = new MutableClock(Instant.parse("2026-04-14T10:00:00Z"));
         var limiter = new LoginRateLimiter(PROPS, clock);
