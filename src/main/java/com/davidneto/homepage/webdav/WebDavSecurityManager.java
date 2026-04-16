@@ -42,10 +42,23 @@ public class WebDavSecurityManager implements SecurityManager {
 
     @Override
     public Object authenticate(String user, String password) {
-        String ip = currentClientIp();
+        return authenticate(user, password, currentClientIp(), ServletResponse.getResponse());
+    }
+
+    /**
+     * IP- and response-aware variant for callers outside Milton's filter
+     * (e.g. Spring MVC controllers authenticating with WebDAV credentials).
+     * {@code ip} may be null when the caller can't determine the client IP —
+     * the rate limiter skips the per-IP tier in that case rather than
+     * bucketing under a shared sentinel. {@code response} may be null and is
+     * only used to emit a {@code Retry-After} header on rate-limited replies.
+     */
+    public Object authenticate(String user, String password, String ip, HttpServletResponse response) {
         LoginRateLimiter.Decision decision = limiter.check(ip, user);
         if (decision.kind() != LoginRateLimiter.DecisionKind.ALLOW) {
-            setRetryAfter(decision.retryAfterSeconds());
+            if (response != null) {
+                response.setHeader("Retry-After", Long.toString(decision.retryAfterSeconds()));
+            }
             log.warn("webdav login blocked ip={} user={} kind={} retryAfter={}s",
                     ip, user, decision.kind(), decision.retryAfterSeconds());
             return null;
@@ -77,11 +90,6 @@ public class WebDavSecurityManager implements SecurityManager {
 
     private String currentClientIp() {
         HttpServletRequest req = ServletRequest.getRequest();
-        return req == null ? "unknown" : req.getRemoteAddr();
-    }
-
-    private void setRetryAfter(long seconds) {
-        HttpServletResponse resp = ServletResponse.getResponse();
-        if (resp != null) resp.setHeader("Retry-After", Long.toString(seconds));
+        return req == null ? null : req.getRemoteAddr();
     }
 }

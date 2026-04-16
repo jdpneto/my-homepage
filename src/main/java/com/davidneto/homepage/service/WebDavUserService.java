@@ -67,6 +67,16 @@ public class WebDavUserService {
         storage.clearUserData(u.getUsername());
     }
 
+    /**
+     * Wipes the named user's files. Used by the authenticated self-service
+     * endpoint once the caller's WebDAV credentials have been verified; the
+     * username here is the principal returned by authentication, never raw
+     * request input.
+     */
+    public void clearDataByUsername(String username) {
+        storage.clearUserData(username);
+    }
+
     public List<WebDavUser> list() {
         return repo.findAllByOrderByUsernameAsc();
     }

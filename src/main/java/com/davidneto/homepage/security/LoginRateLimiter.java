@@ -48,14 +48,20 @@ public class LoginRateLimiter {
 
     public Decision check(String ip, String username) {
         Instant now = clock.instant();
-        synchronized (ipAttempts) {
-            Deque<Instant> window = ipAttempts.get(ip);
-            if (window != null) {
-                pruneIpWindow(window, now);
-                if (window.size() >= props.ipMaxFailures()) {
-                    long retry = props.ipWindowSeconds()
-                            - (now.getEpochSecond() - window.peekFirst().getEpochSecond());
-                    return new Decision(DecisionKind.BLOCK_IP, Math.max(1, retry));
+        // Skip the per-IP tier entirely when the caller can't attribute the
+        // request to an IP. Bucketing such requests under a shared sentinel
+        // (e.g. "unknown") would let one caller lock out everyone else on
+        // the same code path.
+        if (ip != null && !ip.isBlank()) {
+            synchronized (ipAttempts) {
+                Deque<Instant> window = ipAttempts.get(ip);
+                if (window != null) {
+                    pruneIpWindow(window, now);
+                    if (window.size() >= props.ipMaxFailures()) {
+                        long retry = props.ipWindowSeconds()
+                                - (now.getEpochSecond() - window.peekFirst().getEpochSecond());
+                        return new Decision(DecisionKind.BLOCK_IP, Math.max(1, retry));
+                    }
                 }
             }
         }
@@ -75,15 +81,17 @@ public class LoginRateLimiter {
     public void recordFailure(String ip, String username) {
         Instant now = clock.instant();
 
-        synchronized (ipAttempts) {
-            Deque<Instant> window = ipAttempts.get(ip);
-            if (window == null) {
-                window = new ConcurrentLinkedDeque<>();
-                ipAttempts.put(ip, window);
-                enforceCap(ipAttempts);
+        if (ip != null && !ip.isBlank()) {
+            synchronized (ipAttempts) {
+                Deque<Instant> window = ipAttempts.get(ip);
+                if (window == null) {
+                    window = new ConcurrentLinkedDeque<>();
+                    ipAttempts.put(ip, window);
+                    enforceCap(ipAttempts);
+                }
+                pruneIpWindow(window, now);
+                window.addLast(now);
             }
-            pruneIpWindow(window, now);
-            window.addLast(now);
         }
 
         String key = normalize(username);
