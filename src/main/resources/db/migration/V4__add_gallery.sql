@@ -5,7 +5,7 @@ CREATE TABLE gallery_item (
     original_filename   VARCHAR(512) NOT NULL,
     content_type        VARCHAR(100) NOT NULL,
     size_bytes          BIGINT       NOT NULL,
-    content_hash        CHAR(64)     NOT NULL UNIQUE,
+    content_hash        VARCHAR(64)  NOT NULL UNIQUE,
     width               INTEGER,
     height              INTEGER,
     duration_seconds    INTEGER,
