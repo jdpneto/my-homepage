@@ -157,7 +157,16 @@ public class GalleryIngestService {
         item.setBucketSource(bucketSource);
         item.setUploadedAt(uploadedAt);
         item.setUploaderName(uploaderName);
-        repo.save(item);
+        try {
+            repo.save(item);
+        } catch (org.springframework.dao.DataIntegrityViolationException race) {
+            try { Files.deleteIfExists(original); } catch (Exception ignored) {}
+            try { Files.deleteIfExists(thumb); } catch (Exception ignored) {}
+            try { Files.deleteIfExists(display); } catch (Exception ignored) {}
+            GalleryItem winner = repo.findByContentHash(hash)
+                    .orElseThrow(() -> new IllegalStateException("dedupe race but no winner row", race));
+            return new IngestResult(winner.getId(), true);
+        }
         return new IngestResult(item.getId(), false);
     }
 }

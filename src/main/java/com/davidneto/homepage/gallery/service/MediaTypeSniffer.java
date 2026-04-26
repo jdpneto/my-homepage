@@ -27,7 +27,9 @@ final class MediaTypeSniffer {
             // HEIC: ftypheic / ftypheix / ftypmif1 (also covers HEIF variants)
             if (head.length >= 12 && head[4] == 'f' && head[5] == 't' && head[6] == 'y' && head[7] == 'p') {
                 String brand = new String(head, 8, 4);
-                if (brand.equals("heic") || brand.equals("heix") || brand.equals("mif1") || brand.equals("heif"))
+                if (brand.equals("heic") || brand.equals("heix") || brand.equals("mif1") || brand.equals("heif")
+                        || brand.equals("msf1") || brand.equals("hevc") || brand.equals("hevx")
+                        || brand.equals("MiHE") || brand.equals("MiPr"))
                     return "image/heic";
                 if (brand.equals("isom") || brand.equals("mp42") || brand.equals("mp41") || brand.equals("avc1"))
                     return "video/mp4";
