@@ -12,6 +12,8 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
 import java.nio.file.attribute.FileTime;
+import java.time.LocalDateTime;
+import java.time.ZoneId;
 import java.util.stream.Stream;
 
 @Component
@@ -53,8 +55,14 @@ public class WebDavDropFolderScanner {
             FileTime mtime = Files.getLastModifiedTime(file);
             if (mtime.toMillis() > stableCutoff) return; // not stable yet
 
+            // Pass mtime as the bucket fallback so files dropped via WebDAV
+            // with their original modification time preserved (e.g. Finder
+            // copying old photos onto a mounted share) bucket to the right
+            // year/month even when the container/EXIF date is missing.
+            LocalDateTime mtimeLdt = LocalDateTime.ofInstant(
+                    mtime.toInstant(), ZoneId.systemDefault());
             try (InputStream in = Files.newInputStream(file)) {
-                ingest.ingest(in, file.getFileName().toString(), null, null);
+                ingest.ingest(in, file.getFileName().toString(), null, null, mtimeLdt);
             }
             Files.deleteIfExists(file);
         } catch (GalleryIngestService.UnsupportedMediaException e) {

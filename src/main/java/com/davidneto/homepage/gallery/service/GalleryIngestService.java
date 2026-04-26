@@ -48,9 +48,26 @@ public class GalleryIngestService {
         this.posters = posters;
     }
 
+    /**
+     * Ingest where no out-of-band capture date is known. Resolution order
+     * for the year/month bucket: container/EXIF date → upload time.
+     */
     @Transactional
     public IngestResult ingest(InputStream src, String originalFilename,
                                String declaredContentType, String uploaderName) throws IOException {
+        return ingest(src, originalFilename, declaredContentType, uploaderName, null);
+    }
+
+    /**
+     * Ingest with an optional fallback capture date (typically the source
+     * file's mtime, supplied by callers that have a real Path: bulk importer,
+     * WebDAV drop scanner). Resolution order: container/EXIF date →
+     * fallbackTakenAt → upload time.
+     */
+    @Transactional
+    public IngestResult ingest(InputStream src, String originalFilename,
+                               String declaredContentType, String uploaderName,
+                               LocalDateTime fallbackTakenAt) throws IOException {
         Path tmp = storage.newTempFile();
         storage.ensureParentDirs(tmp);
 
@@ -120,6 +137,11 @@ public class GalleryIngestService {
             bucketYear = takenAt.getYear();
             bucketMonth = takenAt.getMonthValue();
             bucketSource = "EXIF";
+        } else if (fallbackTakenAt != null) {
+            takenAt = fallbackTakenAt;
+            bucketYear = fallbackTakenAt.getYear();
+            bucketMonth = fallbackTakenAt.getMonthValue();
+            bucketSource = "MTIME";
         } else {
             bucketYear = uploadedAt.getYear();
             bucketMonth = uploadedAt.getMonthValue();

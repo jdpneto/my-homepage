@@ -11,6 +11,8 @@ import org.springframework.stereotype.Component;
 import java.io.InputStream;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.time.LocalDateTime;
+import java.time.ZoneId;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.stream.Stream;
 
@@ -50,8 +52,16 @@ public class BulkImporter implements ApplicationRunner {
         try (Stream<Path> walk = Files.walk(root)) {
             walk.filter(Files::isRegularFile).forEach(p -> {
                 long n = scanned.incrementAndGet();
+                LocalDateTime mtime;
+                try {
+                    mtime = LocalDateTime.ofInstant(
+                            Files.getLastModifiedTime(p).toInstant(),
+                            ZoneId.systemDefault());
+                } catch (Exception e) {
+                    mtime = null;
+                }
                 try (InputStream in = Files.newInputStream(p)) {
-                    var r = ingest.ingest(in, p.getFileName().toString(), null, uploaderName);
+                    var r = ingest.ingest(in, p.getFileName().toString(), null, uploaderName, mtime);
                     if (r.deduped()) deduped.incrementAndGet();
                     else ingested.incrementAndGet();
                 } catch (GalleryIngestService.UnsupportedMediaException e) {

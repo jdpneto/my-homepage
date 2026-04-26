@@ -106,6 +106,36 @@ class GalleryIngestServiceIT {
     }
 
     @Test
+    void fallbackTakenAt_isUsedWhenExifAbsent_andSetsBucketSourceToMtime() throws Exception {
+        BufferedImage img = new BufferedImage(20, 20, BufferedImage.TYPE_INT_RGB);
+        ByteArrayOutputStream baos = new ByteArrayOutputStream();
+        ImageIO.write(img, "jpg", baos);
+        java.time.LocalDateTime mtime = java.time.LocalDateTime.of(2017, 9, 3, 13, 26, 0);
+
+        var r = ingest.ingest(new ByteArrayInputStream(baos.toByteArray()),
+                "phone.jpg", "image/jpeg", null, mtime);
+
+        GalleryItem item = repo.findById(r.itemId()).orElseThrow();
+        assertThat(item.getBucketSource()).isEqualTo("MTIME");
+        assertThat(item.getBucketYear()).isEqualTo(2017);
+        assertThat(item.getBucketMonth()).isEqualTo(9);
+        assertThat(item.getTakenAt()).isEqualTo(mtime);
+    }
+
+    @Test
+    void exifBeatsMtimeFallback_whenBothPresent() throws Exception {
+        byte[] bytes = jpegWithExif("2010:06:15 12:30:00");
+        java.time.LocalDateTime laterMtime = java.time.LocalDateTime.of(2024, 1, 1, 0, 0);
+
+        var r = ingest.ingest(new ByteArrayInputStream(bytes), "with-exif.jpg", "image/jpeg", null, laterMtime);
+
+        GalleryItem item = repo.findById(r.itemId()).orElseThrow();
+        assertThat(item.getBucketSource()).isEqualTo("EXIF");
+        assertThat(item.getBucketYear()).isEqualTo(2010);
+        assertThat(item.getBucketMonth()).isEqualTo(6);
+    }
+
+    @Test
     void rejectsDisallowedMimeBySniffing() throws Exception {
         byte[] notAnImage = "this is plain text".getBytes();
         org.assertj.core.api.Assertions.assertThatThrownBy(() ->
