@@ -25,9 +25,15 @@ services:
       - ADMIN_PASSWORD=${ADMIN_PASSWORD}
       - UPLOAD_DIR=/app/uploads
       - WEBDAV_ROOT_DIR=/app/webdav
+      - GALLERY_ROOT_DIR=/app/gallery
+      - MAE_PASSWORD=${MAE_PASSWORD}
+      - MAE_TITLE=${MAE_TITLE}
+      - WEBDAV_DROP_USERNAME=${WEBDAV_DROP_USERNAME}
+      - WEBDAV_DROP_PASSWORD=${WEBDAV_DROP_PASSWORD}
     volumes:
       - uploads:/app/uploads
       - webdav_data:/app/webdav
+      - gallery_data:/app/gallery
     depends_on:
       postgres:
         condition: service_healthy
@@ -53,3 +59,4 @@ volumes:
   caddy_data:
   caddy_config:
   webdav_data:
+  gallery_data:

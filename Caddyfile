@@ -14,3 +14,12 @@ cloud.davidneto.eu {
 		header_up X-Forwarded-Host {host}
 	}
 }
+
+drop.davidneto.eu {
+	rewrite * /gallery-drop{uri}
+	reverse_proxy app:8080 {
+		header_up X-Forwarded-For {http.request.remote.host}
+		header_up X-Forwarded-Proto {scheme}
+		header_up X-Forwarded-Host {host}
+	}
+}
