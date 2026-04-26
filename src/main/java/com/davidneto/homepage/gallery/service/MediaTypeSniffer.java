@@ -5,7 +5,7 @@ import java.io.InputStream;
 import java.nio.file.Files;
 import java.nio.file.Path;
 
-final class MediaTypeSniffer {
+public final class MediaTypeSniffer {
 
     private MediaTypeSniffer() {}
 
@@ -40,7 +40,7 @@ final class MediaTypeSniffer {
         }
     }
 
-    static String extensionFor(String mime) {
+    public static String extensionFor(String mime) {
         return switch (mime) {
             case "image/jpeg" -> "jpg";
             case "image/png" -> "png";
