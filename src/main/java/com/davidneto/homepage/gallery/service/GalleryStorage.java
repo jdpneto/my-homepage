@@ -37,7 +37,12 @@ public class GalleryStorage {
     public Path dropDir() { return root.resolve("_drop"); }
     public Path failedDir() { return root.resolve("_drop/_failed"); }
 
+    private static final java.util.regex.Pattern SAFE_EXT = java.util.regex.Pattern.compile("[a-zA-Z0-9]{1,10}");
+
     public Path originalPath(UUID key, String ext) {
+        if (ext == null || !SAFE_EXT.matcher(ext).matches()) {
+            throw new IllegalArgumentException("invalid extension: " + ext);
+        }
         String shard = key.toString().substring(0, 2);
         return root.resolve("originals").resolve(shard).resolve(key + "." + ext);
     }

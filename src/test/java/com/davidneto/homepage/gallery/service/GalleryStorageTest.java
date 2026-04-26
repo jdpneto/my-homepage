@@ -58,6 +58,13 @@ class GalleryStorageTest {
     }
 
     @Test
+    void originalPath_rejectsExtensionWithPathSeparators() {
+        UUID key = UUID.randomUUID();
+        org.assertj.core.api.Assertions.assertThatThrownBy(() -> storage.originalPath(key, "jpg/../../etc"))
+                .isInstanceOf(IllegalArgumentException.class);
+    }
+
+    @Test
     void deleteAll_removesEveryDerivativeForAKey() throws Exception {
         UUID key = UUID.randomUUID();
         Files.createDirectories(storage.originalPath(key, "jpg").getParent());
