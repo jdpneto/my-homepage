@@ -46,6 +46,13 @@ public class GalleryApiController {
                 entry.put("filename", f.getOriginalFilename());
                 entry.put("error", e.getMessage());
                 result.add(entry);
+            } catch (IOException e) {
+                // Don't fail the whole batch on one bad file (e.g. ffmpeg can't
+                // produce a poster). Mark this item as errored and continue.
+                Map<String, Object> entry = new LinkedHashMap<>();
+                entry.put("filename", f.getOriginalFilename());
+                entry.put("error", e.getMessage() == null ? "ingest failed" : e.getMessage());
+                result.add(entry);
             }
         }
         return ResponseEntity.ok(result);
