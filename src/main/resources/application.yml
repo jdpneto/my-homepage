@@ -14,8 +14,8 @@ spring:
     enabled: true
   servlet:
     multipart:
-      max-file-size: 5MB
-      max-request-size: 5MB
+      max-file-size: 500MB
+      max-request-size: 500MB
 
 app:
   admin:
@@ -24,6 +24,16 @@ app:
   upload-dir: ${UPLOAD_DIR:./uploads}
   webdav:
     root-dir: ${WEBDAV_ROOT_DIR:./webdav}
+  mae:
+    password: ${MAE_PASSWORD:}
+    title: ${MAE_TITLE:In memory of}
+  gallery:
+    root-dir: ${GALLERY_ROOT_DIR:./gallery}
+    drop:
+      username: ${WEBDAV_DROP_USERNAME:mae-drop}
+      password: ${WEBDAV_DROP_PASSWORD:}
+      scan-interval-seconds: 30
+      stable-after-seconds: 10
   rate-limit:
     ip-max-failures: 5
     ip-window-seconds: 60

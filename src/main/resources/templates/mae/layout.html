@@ -1,0 +1,30 @@
+<!DOCTYPE html>
+<html xmlns:th="http://www.thymeleaf.org" xmlns:layout="http://www.ultraq.net.nz/thymeleaf/layout"
+      xmlns:sec="http://www.thymeleaf.org/extras/spring-security">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="robots" content="noindex, nofollow">
+    <title th:text="${title}">Memorial</title>
+    <link rel="stylesheet" th:href="@{/css/mae.css}">
+</head>
+<body>
+<header class="mae-header">
+    <h1 th:text="${title}">In memory of</h1>
+    <nav class="nav">
+        <a th:href="@{/mae}">Home</a>
+        <a th:href="@{/mae/recent}">Recently added</a>
+        <a th:href="@{/mae/upload}">Add photos</a>
+        <form th:action="@{/mae/logout}" method="post" style="display:inline">
+            <input type="hidden" th:name="${_csrf.parameterName}" th:value="${_csrf.token}"/>
+            <button type="submit" style="background:none;border:none;color:inherit;cursor:pointer;font:inherit">Sign out</button>
+        </form>
+    </nav>
+</header>
+<main class="mae-main" layout:fragment="main">
+    <p>placeholder</p>
+</main>
+<a class="fab" th:href="@{/mae/upload}">+ Add photos</a>
+<script th:src="@{/js/mae.js}" defer></script>
+</body>
+</html>

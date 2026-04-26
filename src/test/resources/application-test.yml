@@ -17,6 +17,16 @@ app:
   upload-dir: ./build/test-uploads
   webdav:
     root-dir: ./build/test-webdav
+  mae:
+    password: testfamily
+    title: Test Memorial
+  gallery:
+    root-dir: ./build/test-gallery
+    drop:
+      username: mae-drop
+      password: testdrop
+      scan-interval-seconds: 1
+      stable-after-seconds: 1
   rate-limit:
     ip-max-failures: 5
     ip-window-seconds: 60
