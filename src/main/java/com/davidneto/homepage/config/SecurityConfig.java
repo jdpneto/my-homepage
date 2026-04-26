@@ -44,7 +44,7 @@ public class SecurityConfig {
             )
             .formLogin(form -> form
                 .loginPage("/admin/login")
-                .successHandler(new RateLimitAuthenticationSuccessHandler(limiter))
+                .successHandler(new RateLimitAuthenticationSuccessHandler(limiter, "/admin/posts"))
                 .failureHandler(new RateLimitAuthenticationFailureHandler(limiter))
                 .permitAll()
             )

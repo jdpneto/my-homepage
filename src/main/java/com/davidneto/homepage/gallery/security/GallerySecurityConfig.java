@@ -59,7 +59,7 @@ public class GallerySecurityConfig {
                 .passwordParameter("password")
                 .defaultSuccessUrl("/mae", true)
                 .failureUrl("/mae/login?error")
-                .successHandler(new RateLimitAuthenticationSuccessHandler(limiter))
+                .successHandler(new RateLimitAuthenticationSuccessHandler(limiter, "/mae"))
                 .failureHandler(new RateLimitAuthenticationFailureHandler(limiter))
                 .permitAll()
             )

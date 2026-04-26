@@ -15,9 +15,9 @@ public class RateLimitAuthenticationSuccessHandler extends SavedRequestAwareAuth
     private static final Logger log = LoggerFactory.getLogger(RateLimitAuthenticationSuccessHandler.class);
     private final LoginRateLimiter limiter;
 
-    public RateLimitAuthenticationSuccessHandler(LoginRateLimiter limiter) {
+    public RateLimitAuthenticationSuccessHandler(LoginRateLimiter limiter, String defaultTargetUrl) {
         this.limiter = limiter;
-        setDefaultTargetUrl("/admin/posts");
+        setDefaultTargetUrl(defaultTargetUrl);
         setAlwaysUseDefaultTargetUrl(true);
     }
 
@@ -25,7 +25,7 @@ public class RateLimitAuthenticationSuccessHandler extends SavedRequestAwareAuth
     public void onAuthenticationSuccess(HttpServletRequest req, HttpServletResponse resp,
                                         Authentication auth) throws IOException, ServletException {
         limiter.recordSuccess(auth.getName());
-        log.info("admin login success ip={} user={}", req.getRemoteAddr(), auth.getName());
+        log.info("login success ip={} user={}", req.getRemoteAddr(), auth.getName());
         super.onAuthenticationSuccess(req, resp, auth);
     }
 }
