@@ -85,7 +85,9 @@ if [[ "$SKIP_RSYNC" != "yes" ]]; then
     ssh -T "$SSH_TARGET" "mkdir -p '$REMOTE_DIR'"
 
     echo ">>> Rsyncing $SOURCE -> $SSH_TARGET:$REMOTE_DIR/"
-    rsync -avz --info=progress2 "$SOURCE" "$SSH_TARGET:$REMOTE_DIR/"
+    # --progress works on both macOS's bundled rsync (2.6.9) and modern
+    # rsync 3.x; --info=progress2 is 3.1+ only.
+    rsync -avz --progress "$SOURCE" "$SSH_TARGET:$REMOTE_DIR/"
 else
     echo ">>> Skipping rsync (--skip-rsync)"
 fi
