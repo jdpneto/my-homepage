@@ -82,6 +82,16 @@ public class GalleryIngestService {
             throw new UnsupportedMediaException("unsupported or unrecognized media type for " + originalFilename);
         }
         MediaKind kind = sniffed.startsWith("video/") ? MediaKind.VIDEO : MediaKind.PHOTO;
+
+        long photoMaxBytes = 50L * 1024 * 1024;   // 50 MB
+        long videoMaxBytes = 500L * 1024 * 1024;  // 500 MB
+        long max = (kind == MediaKind.VIDEO) ? videoMaxBytes : photoMaxBytes;
+        if (size > max) {
+            Files.deleteIfExists(tmp);
+            throw new UnsupportedMediaException(
+                    kind.name().toLowerCase() + " exceeds maximum size of " + (max / (1024 * 1024)) + " MB");
+        }
+
         String ext = MediaTypeSniffer.extensionFor(sniffed);
 
         UUID storageKey = UUID.randomUUID();

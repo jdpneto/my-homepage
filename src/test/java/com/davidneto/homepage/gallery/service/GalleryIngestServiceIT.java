@@ -112,4 +112,18 @@ class GalleryIngestServiceIT {
                 ingest.ingest(new ByteArrayInputStream(notAnImage), "file.jpg", "image/jpeg", null)
         ).isInstanceOf(GalleryIngestService.UnsupportedMediaException.class);
     }
+
+    @Test
+    void rejectsPhotoExceedingFiftyMegabyteCap() throws Exception {
+        // A real but oversized JPEG: tiny image padded with extra image data is impractical.
+        // Fake the size by writing a 51 MB byte stream that starts with valid JPEG magic.
+        byte[] head = jpegWithExif("2020:01:01 00:00:00");
+        byte[] payload = new byte[51 * 1024 * 1024];
+        System.arraycopy(head, 0, payload, 0, head.length);
+
+        org.assertj.core.api.Assertions.assertThatThrownBy(() ->
+                ingest.ingest(new java.io.ByteArrayInputStream(payload), "huge.jpg", "image/jpeg", null)
+        ).isInstanceOf(GalleryIngestService.UnsupportedMediaException.class)
+         .hasMessageContaining("50 MB");
+    }
 }
