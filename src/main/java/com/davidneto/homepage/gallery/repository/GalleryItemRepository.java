@@ -28,7 +28,7 @@ public interface GalleryItemRepository extends JpaRepository<GalleryItem, Long> 
          group by g.bucketMonth
          order by g.bucketMonth desc
            """)
-    List<MonthSummary> findMonthSummaries(int year);
+    List<MonthSummary> findMonthSummaries(@org.springframework.data.repository.query.Param("year") int year);
 
     interface MonthSummary {
         Integer getMonth();

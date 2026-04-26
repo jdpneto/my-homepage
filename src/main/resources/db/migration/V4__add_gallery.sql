@@ -22,4 +22,3 @@ CREATE TABLE gallery_item (
 
 CREATE INDEX idx_gallery_bucket ON gallery_item (bucket_year DESC, bucket_month DESC);
 CREATE INDEX idx_gallery_recent ON gallery_item (uploaded_at DESC);
-CREATE INDEX idx_gallery_hash   ON gallery_item (content_hash);
