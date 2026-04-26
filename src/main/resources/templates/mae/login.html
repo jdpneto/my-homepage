@@ -1,0 +1,21 @@
+<!DOCTYPE html>
+<html xmlns:th="http://www.thymeleaf.org">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="robots" content="noindex, nofollow">
+    <title th:text="${title}">Memorial</title>
+    <link rel="stylesheet" th:href="@{/css/mae.css}">
+</head>
+<body>
+<div class="login">
+    <h1 th:text="${title}">In memory of</h1>
+    <form th:action="@{/mae/login}" method="post">
+        <input type="password" name="password" placeholder="Password" autofocus required autocomplete="current-password"/>
+        <input type="hidden" th:name="${_csrf.parameterName}" th:value="${_csrf.token}"/>
+        <button type="submit">Enter</button>
+    </form>
+    <p class="error" th:if="${param.error}">Wrong password.</p>
+</div>
+</body>
+</html>
