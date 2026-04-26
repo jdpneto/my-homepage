@@ -1,24 +1,24 @@
 <!DOCTYPE html>
-<html xmlns:th="http://www.thymeleaf.org" xmlns:layout="http://www.ultraq.net.nz/thymeleaf/layout">
+<html xmlns:th="http://www.thymeleaf.org"
+      xmlns:layout="http://www.ultraq.net.nz/thymeleaf/layout"
+      layout:decorate="~{mae/layout}">
 <head><title th:text="${title}">Memorial</title></head>
 <body>
-<div layout:decorate="~{mae/layout}">
-    <main layout:fragment="main">
-        <div class="upload">
-            <h2 class="section-title">Add photos and videos</h2>
-            <div class="upload-fields">
-                <input id="uploader-name" type="text" placeholder="Your name (optional)" autocomplete="name"/>
-                <textarea id="batch-caption" placeholder="Caption for this batch (optional)"></textarea>
-            </div>
-            <div id="dropzone" class="dropzone">
-                Drop photos/videos here or click to choose
-                <input id="file-input" type="file" multiple accept="image/*,video/*" style="display:none;"/>
-            </div>
-            <div id="upload-list" class="upload-list"></div>
-            <input type="hidden" id="csrf-token" th:value="${_csrf.token}"/>
-            <input type="hidden" id="csrf-name" th:value="${_csrf.parameterName}"/>
+<main layout:fragment="main">
+    <div class="upload">
+        <h2 class="section-title">Add photos and videos</h2>
+        <div class="upload-fields">
+            <input id="uploader-name" type="text" placeholder="Your name (optional)" autocomplete="name"/>
+            <textarea id="batch-caption" placeholder="Caption for this batch (optional)"></textarea>
         </div>
-    </main>
-</div>
+        <div id="dropzone" class="dropzone">
+            Drop photos/videos here or click to choose
+            <input id="file-input" type="file" multiple accept="image/*,video/*" style="display:none;"/>
+        </div>
+        <div id="upload-list" class="upload-list"></div>
+        <input type="hidden" id="csrf-token" th:value="${_csrf.token}"/>
+        <input type="hidden" id="csrf-name" th:value="${_csrf.parameterName}"/>
+    </div>
+</main>
 </body>
 </html>

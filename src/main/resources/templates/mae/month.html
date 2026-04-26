@@ -1,19 +1,19 @@
 <!DOCTYPE html>
-<html xmlns:th="http://www.thymeleaf.org" xmlns:layout="http://www.ultraq.net.nz/thymeleaf/layout">
+<html xmlns:th="http://www.thymeleaf.org"
+      xmlns:layout="http://www.ultraq.net.nz/thymeleaf/layout"
+      layout:decorate="~{mae/layout}">
 <head><title th:text="${title}">Memorial</title></head>
 <body>
-<div layout:decorate="~{mae/layout}">
-    <main layout:fragment="main">
-        <h2 class="section-title" th:text="|${monthName} ${year}|">January 2020</h2>
-        <div class="grid">
-            <div th:each="i : ${items}" class="item">
-                <a th:href="@{/mae/item/{id}(id=${i.id})}">
-                    <img th:src="@{/mae/media/thumb/{id}(id=${i.id})}" alt=""/>
-                </a>
-                <span th:if="${i.mediaKind.name() == 'VIDEO'}" class="video-badge">VIDEO</span>
-            </div>
+<main layout:fragment="main">
+    <h2 class="section-title" th:text="|${monthName} ${year}|">January 2020</h2>
+    <div class="grid">
+        <div th:each="i : ${items}" class="item">
+            <a th:href="@{/mae/item/{id}(id=${i.id})}">
+                <img th:src="@{/mae/media/thumb/{id}(id=${i.id})}" alt=""/>
+            </a>
+            <span th:if="${i.mediaKind.name() == 'VIDEO'}" class="video-badge">VIDEO</span>
         </div>
-    </main>
-</div>
+    </div>
+</main>
 </body>
 </html>

@@ -1,33 +1,33 @@
 <!DOCTYPE html>
-<html xmlns:th="http://www.thymeleaf.org" xmlns:layout="http://www.ultraq.net.nz/thymeleaf/layout">
+<html xmlns:th="http://www.thymeleaf.org"
+      xmlns:layout="http://www.ultraq.net.nz/thymeleaf/layout"
+      layout:decorate="~{mae/layout}">
 <head>
     <title th:text="${title}">Memorial</title>
 </head>
 <body>
-<div layout:decorate="~{mae/layout}">
-    <main layout:fragment="main">
-        <h2 class="section-title">Recently added</h2>
-        <div class="recent-strip">
-            <a th:each="i : ${recent}" th:href="@{/mae/item/{id}(id=${i.id})}">
-                <img th:src="@{/mae/media/thumb/{id}(id=${i.id})}" alt=""/>
-            </a>
-            <a th:href="@{/mae/recent}" style="align-self:center; padding:0 1rem;">see all →</a>
-        </div>
-        <div th:each="entry : ${byYear}" class="year-block">
-            <h2 th:text="${entry.key}">2020</h2>
-            <div th:each="m : ${entry.value}" class="month-section">
-                <h3>
-                    <a th:href="@{/mae/{y}/{m}(y=${entry.key},m=${m.month})}"
-                       th:text="|${m.monthName()} (${m.itemCount()})|">January (12)</a>
-                </h3>
-                <div class="month-preview">
-                    <a th:each="p : ${m.preview()}" th:href="@{/mae/item/{id}(id=${p.id})}">
-                        <img th:src="@{/mae/media/thumb/{id}(id=${p.id})}" alt=""/>
-                    </a>
-                </div>
+<main layout:fragment="main">
+    <h2 class="section-title">Recently added</h2>
+    <div class="recent-strip">
+        <a th:each="i : ${recent}" th:href="@{/mae/item/{id}(id=${i.id})}">
+            <img th:src="@{/mae/media/thumb/{id}(id=${i.id})}" alt=""/>
+        </a>
+        <a th:href="@{/mae/recent}" style="align-self:center; padding:0 1rem;">see all →</a>
+    </div>
+    <div th:each="entry : ${byYear}" class="year-block">
+        <h2 th:text="${entry.key}">2020</h2>
+        <div th:each="m : ${entry.value}" class="month-section">
+            <h3>
+                <a th:href="@{/mae/{y}/{m}(y=${entry.key},m=${m.month})}"
+                   th:text="|${m.monthName()} (${m.itemCount()})|">January (12)</a>
+            </h3>
+            <div class="month-preview">
+                <a th:each="p : ${m.preview()}" th:href="@{/mae/item/{id}(id=${p.id})}">
+                    <img th:src="@{/mae/media/thumb/{id}(id=${p.id})}" alt=""/>
+                </a>
             </div>
         </div>
-    </main>
-</div>
+    </div>
+</main>
 </body>
 </html>

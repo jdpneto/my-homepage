@@ -1,49 +1,49 @@
 <!DOCTYPE html>
-<html xmlns:th="http://www.thymeleaf.org" xmlns:layout="http://www.ultraq.net.nz/thymeleaf/layout"
-      xmlns:sec="http://www.thymeleaf.org/extras/spring-security">
+<html xmlns:th="http://www.thymeleaf.org"
+      xmlns:layout="http://www.ultraq.net.nz/thymeleaf/layout"
+      xmlns:sec="http://www.thymeleaf.org/extras/spring-security"
+      layout:decorate="~{mae/layout}">
 <head><title th:text="${title}">Memorial</title></head>
 <body>
-<div layout:decorate="~{mae/layout}">
-    <main layout:fragment="main">
-        <div class="lightbox" th:attr="data-item-id=${item.id}">
-            <div class="media">
-                <th:block th:if="${item.mediaKind.name() == 'PHOTO'}">
-                    <img th:src="@{/mae/media/display/{id}(id=${item.id})}" alt=""/>
-                </th:block>
-                <th:block th:if="${item.mediaKind.name() == 'VIDEO'}">
-                    <video controls preload="metadata"
-                           th:poster="@{/mae/media/display/{id}(id=${item.id})}"
-                           th:src="@{/mae/media/original/{id}(id=${item.id})}"></video>
-                </th:block>
-            </div>
-            <div class="meta">
-                <span th:if="${item.uploaderName != null}" th:text="|Added by ${item.uploaderName} · |"></span>
-                <span th:text="|Uploaded ${#temporals.format(item.uploadedAt, 'yyyy-MM-dd')}|"></span>
-                <span th:if="${item.takenAt != null}"
-                      th:text="| · Taken ${#temporals.format(item.takenAt, 'yyyy-MM-dd')}|"></span>
-                <span th:text="| · ${item.originalFilename}|"></span>
-            </div>
-            <div class="caption">
-                <div class="caption-display" th:text="${item.caption ?: 'No caption yet — click edit to add one.'}"></div>
-                <textarea class="caption-edit" style="display:none;" th:text="${item.caption}"></textarea>
-                <div style="margin-top:.5rem;">
-                    <button class="btn-edit-caption">Edit caption</button>
-                    <button class="btn-save-caption" style="display:none;">Save</button>
-                    <button class="btn-cancel-caption" style="display:none;">Cancel</button>
-                </div>
-            </div>
-            <div class="actions">
-                <div class="nav-links">
-                    <a th:if="${prev != null}" class="nav-prev" th:href="@{/mae/item/{id}(id=${prev.id})}">← Previous</a>
-                    <a th:if="${next != null}" class="nav-next" th:href="@{/mae/item/{id}(id=${next.id})}">Next →</a>
-                </div>
-                <div>
-                    <a th:href="@{/mae/media/original/{id}(id=${item.id})}">Download original</a>
-                    <button sec:authorize="hasRole('GALLERY_ADMIN')" class="danger btn-delete">Delete</button>
-                </div>
+<main layout:fragment="main">
+    <div class="lightbox" th:attr="data-item-id=${item.id}">
+        <div class="media">
+            <th:block th:if="${item.mediaKind.name() == 'PHOTO'}">
+                <img th:src="@{/mae/media/display/{id}(id=${item.id})}" alt=""/>
+            </th:block>
+            <th:block th:if="${item.mediaKind.name() == 'VIDEO'}">
+                <video controls preload="metadata"
+                       th:poster="@{/mae/media/display/{id}(id=${item.id})}"
+                       th:src="@{/mae/media/original/{id}(id=${item.id})}"></video>
+            </th:block>
+        </div>
+        <div class="meta">
+            <span th:if="${item.uploaderName != null}" th:text="|Added by ${item.uploaderName} · |"></span>
+            <span th:text="|Uploaded ${#temporals.format(item.uploadedAt, 'yyyy-MM-dd')}|"></span>
+            <span th:if="${item.takenAt != null}"
+                  th:text="| · Taken ${#temporals.format(item.takenAt, 'yyyy-MM-dd')}|"></span>
+            <span th:text="| · ${item.originalFilename}|"></span>
+        </div>
+        <div class="caption">
+            <div class="caption-display" th:text="${item.caption ?: 'No caption yet — click edit to add one.'}"></div>
+            <textarea class="caption-edit" style="display:none;" th:text="${item.caption}"></textarea>
+            <div style="margin-top:.5rem;">
+                <button class="btn-edit-caption">Edit caption</button>
+                <button class="btn-save-caption" style="display:none;">Save</button>
+                <button class="btn-cancel-caption" style="display:none;">Cancel</button>
             </div>
         </div>
-    </main>
-</div>
+        <div class="actions">
+            <div class="nav-links">
+                <a th:if="${prev != null}" class="nav-prev" th:href="@{/mae/item/{id}(id=${prev.id})}">← Previous</a>
+                <a th:if="${next != null}" class="nav-next" th:href="@{/mae/item/{id}(id=${next.id})}">Next →</a>
+            </div>
+            <div>
+                <a th:href="@{/mae/media/original/{id}(id=${item.id})}">Download original</a>
+                <button sec:authorize="hasRole('GALLERY_ADMIN')" class="danger btn-delete">Delete</button>
+            </div>
+        </div>
+    </div>
+</main>
 </body>
 </html>

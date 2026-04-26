@@ -1,24 +1,24 @@
 <!DOCTYPE html>
-<html xmlns:th="http://www.thymeleaf.org" xmlns:layout="http://www.ultraq.net.nz/thymeleaf/layout">
+<html xmlns:th="http://www.thymeleaf.org"
+      xmlns:layout="http://www.ultraq.net.nz/thymeleaf/layout"
+      layout:decorate="~{mae/layout}">
 <head><title th:text="${title}">Memorial</title></head>
 <body>
-<div layout:decorate="~{mae/layout}">
-    <main layout:fragment="main">
-        <h2 class="section-title">Recently added</h2>
-        <div class="grid">
-            <div th:each="i : ${page.content}" class="item">
-                <a th:href="@{/mae/item/{id}(id=${i.id})}">
-                    <img th:src="@{/mae/media/thumb/{id}(id=${i.id})}" alt=""/>
-                </a>
-                <span th:if="${i.mediaKind.name() == 'VIDEO'}" class="video-badge">VIDEO</span>
-            </div>
+<main layout:fragment="main">
+    <h2 class="section-title">Recently added</h2>
+    <div class="grid">
+        <div th:each="i : ${page.content}" class="item">
+            <a th:href="@{/mae/item/{id}(id=${i.id})}">
+                <img th:src="@{/mae/media/thumb/{id}(id=${i.id})}" alt=""/>
+            </a>
+            <span th:if="${i.mediaKind.name() == 'VIDEO'}" class="video-badge">VIDEO</span>
         </div>
-        <div style="margin-top:1rem; text-align:center;">
-            <a th:if="${page.hasPrevious()}" th:href="@{/mae/recent(page=${page.number - 1})}">← Newer</a>
-            <span style="margin: 0 1rem; color: var(--muted);" th:text="|page ${page.number + 1} of ${page.totalPages}|"></span>
-            <a th:if="${page.hasNext()}" th:href="@{/mae/recent(page=${page.number + 1})}">Older →</a>
-        </div>
-    </main>
-</div>
+    </div>
+    <div style="margin-top:1rem; text-align:center;">
+        <a th:if="${page.hasPrevious()}" th:href="@{/mae/recent(page=${page.number - 1})}">← Newer</a>
+        <span style="margin: 0 1rem; color: var(--muted);" th:text="|page ${page.number + 1} of ${page.totalPages}|"></span>
+        <a th:if="${page.hasNext()}" th:href="@{/mae/recent(page=${page.number + 1})}">Older →</a>
+    </div>
+</main>
 </body>
 </html>
