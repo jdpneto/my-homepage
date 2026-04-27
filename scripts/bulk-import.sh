@@ -70,6 +70,16 @@ for arg in "$@"; do
     esac
 done
 
+MANIFEST_NAME='.taken-at-manifest.tsv'
+
+# Filesystem birthtime is OS-specific and rsync doesn't preserve it, so we
+# capture it locally before rsync and ship a manifest sidecar that the
+# bulk importer reads as the preferred bucket-date fallback.
+case "$(uname -s)" in
+    Darwin) stat_birth() { stat -f '%B' "$1" 2>/dev/null; } ;;
+    *)      stat_birth() { stat -c '%W' "$1" 2>/dev/null; } ;;  # GNU stat; 0 if unavailable
+esac
+
 if [[ "$SKIP_RSYNC" != "yes" ]]; then
     if [[ -z "$SOURCE" ]]; then
         echo "error: IMPORT_SOURCE not set" >&2; usage; exit 2
@@ -77,17 +87,36 @@ if [[ "$SKIP_RSYNC" != "yes" ]]; then
     if [[ ! -d "$SOURCE" ]]; then
         echo "error: $SOURCE is not a directory" >&2; exit 2
     fi
-    # rsync trailing-slash semantics: with a slash, contents are copied
-    # into REMOTE_DIR; without one, the source dir itself is nested inside.
-    case "$SOURCE" in */) ;; *) SOURCE="$SOURCE/" ;; esac
+    # Strip trailing slash for stable manifest paths, then add it back for rsync.
+    case "$SOURCE" in */) SOURCE="${SOURCE%/}" ;; esac
+
+    manifest="$SOURCE/$MANIFEST_NAME"
+    echo ">>> Building birthtime manifest at $manifest"
+    : > "$manifest"
+    entries=0
+    skipped=0
+    while IFS= read -r -d '' f; do
+        rel="${f#./}"
+        epoch="$(stat_birth "$f" || true)"
+        if [[ -z "$epoch" || "$epoch" == "0" || "$epoch" == "-" ]]; then
+            skipped=$((skipped + 1))
+            continue
+        fi
+        printf '%s\t%s\n' "$rel" "$epoch" >> "$manifest"
+        entries=$((entries + 1))
+    done < <(cd "$SOURCE" && find . -type f \
+                 -not -name "$MANIFEST_NAME" \
+                 -not -name '.DS_Store' \
+                 -print0)
+    echo "    $entries files with birthtime captured, $skipped without (will fall back to mtime)"
 
     echo ">>> Ensuring $REMOTE_DIR exists on $SSH_TARGET"
     ssh -T "$SSH_TARGET" "mkdir -p '$REMOTE_DIR'"
 
-    echo ">>> Rsyncing $SOURCE -> $SSH_TARGET:$REMOTE_DIR/"
+    echo ">>> Rsyncing $SOURCE/ -> $SSH_TARGET:$REMOTE_DIR/"
     # --progress works on both macOS's bundled rsync (2.6.9) and modern
     # rsync 3.x; --info=progress2 is 3.1+ only.
-    rsync -avz --progress "$SOURCE" "$SSH_TARGET:$REMOTE_DIR/"
+    rsync -avz --progress "$SOURCE/" "$SSH_TARGET:$REMOTE_DIR/"
 else
     echo ">>> Skipping rsync (--skip-rsync)"
 fi

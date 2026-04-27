@@ -66,6 +66,39 @@ class BulkImporterIT {
     }
 
     @Test
+    void manifestEntry_isUsedOverFilesystemMtime_andSetsBucketSourceMtime() throws Exception {
+        Path src = Files.createTempDirectory("bulk-src-");
+
+        // A JPEG with NO EXIF date so the bucket comes from a fallback.
+        BufferedImage img = new BufferedImage(8, 8, BufferedImage.TYPE_INT_RGB);
+        ByteArrayOutputStream baos = new ByteArrayOutputStream();
+        ImageIO.write(img, "jpg", baos);
+        Path photo = src.resolve("no-exif.jpg");
+        Files.write(photo, baos.toByteArray());
+
+        // Set the file's mtime to something recent (simulates "Mac mtime got
+        // reset to 'when copied here'") so we can prove the manifest wins.
+        Files.setLastModifiedTime(photo,
+                java.nio.file.attribute.FileTime.from(
+                        java.time.Instant.now().minusSeconds(60)));
+
+        // Manifest claims the real birthtime is 3 Sep 2017.
+        long birthEpoch = java.time.LocalDateTime.of(2017, 9, 3, 13, 26, 0)
+                .atZone(java.time.ZoneId.systemDefault())
+                .toEpochSecond();
+        Files.writeString(src.resolve(".taken-at-manifest.tsv"),
+                "no-exif.jpg\t" + birthEpoch + "\n");
+
+        BulkImporter importer = new BulkImporter(ingest);
+        importer.importDirectory(src, null);
+
+        var item = repo.findAll().get(0);
+        assertThat(item.getBucketSource()).isEqualTo("MTIME");
+        assertThat(item.getBucketYear()).isEqualTo(2017);
+        assertThat(item.getBucketMonth()).isEqualTo(9);
+    }
+
+    @Test
     void importDirectory_isIdempotent_dedupedOnSecondRun() throws Exception {
         Path src = Files.createTempDirectory("bulk-src-");
         writeJpegWithExif(src.resolve("a.jpg"), "2012:03:03 00:00:00");
