@@ -117,6 +117,40 @@ public class PerUserFileResourceFactory implements ResourceFactory {
         }
     }
 
+    /**
+     * Total bytes currently used by the named user's WebDAV directory.
+     * Returns 0 if the user has not yet stored anything (or username is invalid).
+     * Path-traversal guarded the same way as {@link #clearUserData}.
+     */
+    public long currentUsageBytes(String username) {
+        File root = new File(rootDir);
+        File userRoot = new File(root, username);
+        File canonicalRoot;
+        File canonicalUserRoot;
+        try {
+            canonicalRoot = root.getCanonicalFile();
+            canonicalUserRoot = userRoot.getCanonicalFile();
+        } catch (IOException e) {
+            throw new UncheckedIOException(e);
+        }
+        File userParent = canonicalUserRoot.getParentFile();
+        if (userParent == null || !userParent.equals(canonicalRoot)) {
+            throw new IllegalArgumentException("invalid username: " + username);
+        }
+        if (!canonicalUserRoot.exists()) return 0L;
+        try (Stream<Path> s = Files.walk(canonicalUserRoot.toPath())) {
+            return s.filter(Files::isRegularFile).mapToLong(p -> {
+                try {
+                    return Files.size(p);
+                } catch (IOException e) {
+                    return 0L;
+                }
+            }).sum();
+        } catch (IOException e) {
+            throw new UncheckedIOException(e);
+        }
+    }
+
     private FileSystemResourceFactory buildFactory(String username) {
         File userRoot = new File(rootDir, username);
         if (!userRoot.exists() && !userRoot.mkdirs()) {

@@ -21,10 +21,15 @@ public class WebDavUser {
     @Column(name = "created_at", nullable = false, updatable = false, insertable = false)
     private Instant createdAt;
 
+    @Column(name = "storage_quota_mb", nullable = false)
+    private long storageQuotaMb = 50;
+
     public Long getId() { return id; }
     public String getUsername() { return username; }
     public void setUsername(String u) { this.username = u; }
     public String getPasswordHash() { return passwordHash; }
     public void setPasswordHash(String h) { this.passwordHash = h; }
     public Instant getCreatedAt() { return createdAt; }
+    public long getStorageQuotaMb() { return storageQuotaMb; }
+    public void setStorageQuotaMb(long mb) { this.storageQuotaMb = mb; }
 }
