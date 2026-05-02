@@ -47,7 +47,7 @@ public class MiltonConfig {
      * PUTs with HTTP 507 without invoking the full WebDAV resource pipeline.
      */
     @Bean
-    public FilterRegistrationBean<WebDavQuotaFilter> webDavQuotaFilter(WebDavQuotaFilter filter) {
+    public FilterRegistrationBean<WebDavQuotaFilter> webDavQuotaFilterRegistration(WebDavQuotaFilter filter) {
         FilterRegistrationBean<WebDavQuotaFilter> reg = new FilterRegistrationBean<>(filter);
         reg.addUrlPatterns("/webdav/*");
         reg.setName("webdav-quota");
