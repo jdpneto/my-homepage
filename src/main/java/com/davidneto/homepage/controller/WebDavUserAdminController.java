@@ -18,17 +18,31 @@ public class WebDavUserAdminController {
 
     @GetMapping
     public String list(Model model) {
-        model.addAttribute("users", service.list());
+        model.addAttribute("users", service.listWithUsage());
         return "admin/webdav-users";
     }
 
     @PostMapping
     public String create(@RequestParam String username,
                          @RequestParam String password,
+                         @RequestParam(name = "quotaMb", defaultValue = "50") long quotaMb,
                          RedirectAttributes redirect) {
         try {
-            service.create(username, password);
+            service.create(username, password, quotaMb);
             redirect.addFlashAttribute("message", "User '" + username + "' created.");
+        } catch (IllegalArgumentException e) {
+            redirect.addFlashAttribute("error", e.getMessage());
+        }
+        return "redirect:/admin/webdav-users";
+    }
+
+    @PostMapping("/{id}/set-quota")
+    public String setQuota(@PathVariable Long id,
+                           @RequestParam long quotaMb,
+                           RedirectAttributes redirect) {
+        try {
+            service.updateQuota(id, quotaMb);
+            redirect.addFlashAttribute("message", "Quota set to " + quotaMb + " MB.");
         } catch (IllegalArgumentException e) {
             redirect.addFlashAttribute("error", e.getMessage());
         }

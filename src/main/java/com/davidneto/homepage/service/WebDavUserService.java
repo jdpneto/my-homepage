@@ -31,12 +31,28 @@ public class WebDavUserService {
 
     @Transactional
     public WebDavUser create(String username, String rawPassword) {
+        return create(username, rawPassword, 50L);
+    }
+
+    @Transactional
+    public WebDavUser create(String username, String rawPassword, long quotaMb) {
         validateUsername(username);
         validatePassword(rawPassword);
+        validateQuota(quotaMb);
         WebDavUser u = new WebDavUser();
         u.setUsername(username);
         u.setPasswordHash(encoder.encode(rawPassword));
+        u.setStorageQuotaMb(quotaMb);
         return repo.save(u);
+    }
+
+    @Transactional
+    public void updateQuota(Long id, long quotaMb) {
+        WebDavUser u = repo.findById(id).orElseThrow(
+                () -> new IllegalArgumentException("unknown user id: " + id));
+        validateQuota(quotaMb);
+        u.setStorageQuotaMb(quotaMb);
+        repo.save(u);
     }
 
     @Transactional
@@ -81,6 +97,21 @@ public class WebDavUserService {
         return repo.findAllByOrderByUsernameAsc();
     }
 
+    /**
+     * Listing decorated with current on-disk usage. Computed by walking each
+     * user's directory; cheap at small quotas, fine for the admin page which
+     * is rarely loaded.
+     */
+    public List<UserUsageView> listWithUsage() {
+        return repo.findAllByOrderByUsernameAsc().stream()
+                .map(u -> new UserUsageView(u, storage.currentUsageBytes(u.getUsername())))
+                .toList();
+    }
+
+    public record UserUsageView(WebDavUser user, long usageBytes) {
+        public long usageMb() { return usageBytes / (1024L * 1024L); }
+    }
+
     public Optional<WebDavUser> findByUsername(String username) {
         if (username == null || !USERNAME_PATTERN.matcher(username).matches()) return Optional.empty();
         return repo.findByUsername(username);
@@ -94,5 +125,10 @@ public class WebDavUserService {
     private void validatePassword(String p) {
         if (p == null || p.length() < MIN_PASSWORD_LENGTH)
             throw new IllegalArgumentException("password must be at least " + MIN_PASSWORD_LENGTH + " chars");
+    }
+
+    private void validateQuota(long mb) {
+        if (mb < 0) throw new IllegalArgumentException("quota must be >= 0 MB");
+        if (mb > 1024L * 1024L) throw new IllegalArgumentException("quota must be <= 1048576 MB (1 TiB)");
     }
 }

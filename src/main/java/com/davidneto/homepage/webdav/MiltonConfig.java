@@ -41,4 +41,17 @@ public class MiltonConfig {
         reg.setOrder(1);
         return reg;
     }
+
+    /**
+     * Quota enforcement runs before Milton so we can short-circuit oversized
+     * PUTs with HTTP 507 without invoking the full WebDAV resource pipeline.
+     */
+    @Bean
+    public FilterRegistrationBean<WebDavQuotaFilter> webDavQuotaFilter(WebDavQuotaFilter filter) {
+        FilterRegistrationBean<WebDavQuotaFilter> reg = new FilterRegistrationBean<>(filter);
+        reg.addUrlPatterns("/webdav/*");
+        reg.setName("webdav-quota");
+        reg.setOrder(0);
+        return reg;
+    }
 }
