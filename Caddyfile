@@ -23,3 +23,19 @@ drop.davidneto.eu {
 		header_up X-Forwarded-Host {host}
 	}
 }
+
+bordofix.davidneto.eu {
+	reverse_proxy bordofix-app:3000 {
+		header_up X-Forwarded-For {http.request.remote.host}
+		header_up X-Forwarded-Proto {scheme}
+		header_up X-Forwarded-Host {host}
+	}
+}
+
+bordofix-api.davidneto.eu {
+	reverse_proxy bordofix-kong:8000 {
+		header_up X-Forwarded-For {http.request.remote.host}
+		header_up X-Forwarded-Proto {scheme}
+		header_up X-Forwarded-Host {host}
+	}
+}

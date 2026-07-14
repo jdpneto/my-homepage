@@ -11,6 +11,10 @@ services:
       - caddy_config:/config
     depends_on:
       - app
+    networks:
+      - default
+      - web
+
 
   app:
     build: .
@@ -60,3 +64,7 @@ volumes:
   caddy_config:
   webdav_data:
   gallery_data:
+
+networks:
+  web:
+    external: true
