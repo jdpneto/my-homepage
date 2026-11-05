@@ -3,7 +3,7 @@ package com.davidneto.homepage.webdav;
 import com.davidneto.homepage.repository.WebDavUserRepository;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
+import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.security.test.context.support.WithMockUser;
 import org.springframework.test.context.ActiveProfiles;
@@ -54,6 +54,6 @@ class WebDavUserAdminIT {
     void unauthenticated_request_is_redirected_to_login() throws Exception {
         mvc.perform(get("/admin/webdav-users"))
                 .andExpect(status().is3xxRedirection())
-                .andExpect(redirectedUrlPattern("**/admin/login"));
+                .andExpect(redirectedUrl("/admin/login"));
     }
 }

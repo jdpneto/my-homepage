@@ -5,9 +5,11 @@ import com.davidneto.homepage.entity.BlogPost;
 import com.davidneto.homepage.entity.StaticPage;
 import com.davidneto.homepage.security.LoginRateLimiter;
 import com.davidneto.homepage.service.*;
+import com.davidneto.homepage.repository.WebDavUserRepository;
+import com.davidneto.homepage.webdav.PerUserFileResourceFactory;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.boot.test.autoconfigure.web.servlet.WebMvcTest;
+import org.springframework.boot.webmvc.test.autoconfigure.WebMvcTest;
 import org.springframework.context.annotation.Import;
 import org.springframework.security.test.context.support.WithMockUser;
 import org.springframework.test.context.TestPropertySource;
@@ -35,6 +37,12 @@ class AdminControllerTest {
 
     @Autowired
     private MockMvc mockMvc;
+
+    @MockitoBean
+    private WebDavUserRepository webDavUserRepository;
+
+    @MockitoBean
+    private PerUserFileResourceFactory perUserFileResourceFactory;
 
     @MockitoBean
     private LoginRateLimiter loginRateLimiter;
