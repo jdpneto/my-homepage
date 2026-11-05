@@ -1,0 +1,21 @@
+name: Tests
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 21
+          cache: maven
+      - name: Install ffmpeg (used by video tests)
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq ffmpeg
+      - name: Run tests
+        run: ./mvnw -B test
