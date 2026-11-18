@@ -14,18 +14,29 @@ from pathlib import Path
 from . import __version__
 from .config import Config, ConfigError, load_config
 from .cycle import run_cycle
-from .hub import HubError, ReolinkHub
+from .hub import HubAuthError, HubError, ReolinkHub
 from .state import StateStore
 from .webdav import AuthError, QuotaFullError, TransientError, WebDavClient, WebDavError
 
 log = logging.getLogger("camera_uploader")
 
 DEFAULT_CONFIG = Path("/usr/local/etc/camera-uploader/config.toml")
+CLOCK_SKEW_WARN = 300  # seconds
+
+
+async def _cycle_now(hub, clock) -> datetime:
+    """Use the hub's clock: clip timestamps are hub-local, so the search window must be too."""
+    hub_now = await hub.now()
+    skew = abs((hub_now - clock()).total_seconds())
+    if skew > CLOCK_SKEW_WARN:
+        log.warning("hub clock differs from this Mac's clock by %.0f s - using the hub clock "
+                    "(check the hub's time zone / DST setting)", skew)
+    return hub_now
 
 
 def backoff_seconds(error: Exception, consecutive: int) -> float:
-    if isinstance(error, AuthError):
-        return 900  # the homepage locks a WebDAV user out after repeated bad logins
+    if isinstance(error, (AuthError, HubAuthError)):
+        return 900  # both the homepage and the hub lock accounts out after repeated bad logins
     if isinstance(error, QuotaFullError):
         return 600
     if isinstance(error, (HubError, TransientError)):
@@ -77,7 +88,7 @@ async def run_forever(cfg: Config, hub_factory, dav_factory, sleep=asyncio.sleep
                 if hub is None:
                     hub = hub_factory(cfg)
                     await hub.connect()
-                result = await run_cycle(hub, dav, store, cfg, clock())
+                result = await run_cycle(hub, dav, store, cfg, await _cycle_now(hub, clock))
                 if result.uploaded or result.failed:
                     log.info("cycle: %d uploaded, %d pending, %d failed, %d already done",
                              result.uploaded, result.pending, result.failed, result.skipped)
@@ -110,7 +121,7 @@ async def run_once(cfg: Config, hub_factory, dav_factory, clock=datetime.now) ->
     hub = hub_factory(cfg)
     try:
         await hub.connect()
-        result = await run_cycle(hub, dav, store, cfg, clock())
+        result = await run_cycle(hub, dav, store, cfg, await _cycle_now(hub, clock))
         log.info("once: %d uploaded, %d pending, %d failed, %d already done",
                  result.uploaded, result.pending, result.failed, result.skipped)
         return 0

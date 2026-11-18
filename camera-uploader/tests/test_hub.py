@@ -51,3 +51,42 @@ def test_count_untyped_counts_only_none_entries():
     by_time = {"20261116192258": VOD_trigger.MOTION, "20261116193000": VOD_trigger.NONE,
                "20261116194000": VOD_trigger.NONE}
     assert count_untyped(by_time) == 2
+
+
+# --- final-review fixes ---------------------------------------------------------
+from datetime import timezone, timedelta as _td
+
+import pytest
+from reolink_aio.exceptions import CredentialsInvalidError, ReolinkConnectionError
+
+from camera_uploader.hub import HubAuthError, HubError, ReolinkHub
+
+
+def test_wrap_maps_bad_credentials_to_hub_auth_error():
+    err = ReolinkHub._wrap("connect", CredentialsInvalidError("bad"))
+    assert isinstance(err, HubAuthError) and isinstance(err, HubError)
+
+
+def test_wrap_maps_connection_error_to_plain_hub_error():
+    err = ReolinkHub._wrap("connect", ReolinkConnectionError("down"))
+    assert type(err) is HubError
+
+
+async def test_now_is_hub_local_naive_time(config_path):
+    from camera_uploader.config import load_config
+
+    hub = ReolinkHub(load_config(config_path))
+    aware = datetime(2026, 11, 18, 20, 0, 5, tzinfo=timezone(_td(hours=-1)))
+    hub._host = SimpleNamespace(time=lambda: aware)
+    assert await hub.now() == datetime(2026, 11, 18, 20, 0, 5)
+
+
+async def test_now_asks_hub_when_no_cached_time(config_path):
+    from camera_uploader.config import load_config
+
+    async def async_get_time():
+        return datetime(2026, 11, 18, 20, 1, 0, tzinfo=timezone.utc)
+
+    hub = ReolinkHub(load_config(config_path))
+    hub._host = SimpleNamespace(time=lambda: None, async_get_time=async_get_time)
+    assert await hub.now() == datetime(2026, 11, 18, 20, 1, 0)

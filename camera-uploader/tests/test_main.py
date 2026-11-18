@@ -36,6 +36,9 @@ class FakeHub:
     async def info(self):
         return {"model": "m", "firmware": "f"}
 
+    async def now(self):
+        return NOW
+
     async def close(self):
         self.closed = True
 
@@ -193,3 +196,31 @@ async def test_marker_missing_backs_off_without_resetting_hub(cfg, caplog):
     assert delays == [300, 300]
     assert len(FakeHub.instances) == 1          # same hub session kept
     assert "Traceback" not in caplog.text
+
+
+def test_backoff_hub_auth_error_is_15_minutes():
+    from camera_uploader.hub import HubAuthError
+    assert backoff_seconds(HubAuthError("bad password"), 1) == 900
+    assert backoff_seconds(HubAuthError("bad password"), 5) == 900
+
+
+async def test_cycle_uses_hub_clock_and_warns_on_skew(cfg, caplog):
+    from datetime import timedelta
+
+    hub_time = NOW - timedelta(hours=1)
+
+    class SkewedHub(FakeHub):
+        windows = []
+
+        async def now(self):
+            return hub_time
+
+        async def list_clips(self, start, end):
+            SkewedHub.windows.append((start, end))
+            return []
+
+    sleep, _ = sleeper(1)
+    with pytest.raises(Stop):
+        await run_forever(cfg, lambda c: SkewedHub(), lambda c: FakeDav(), sleep=sleep, clock=lambda: NOW)
+    assert SkewedHub.windows[0][1] == hub_time
+    assert "clock" in caplog.text.lower()

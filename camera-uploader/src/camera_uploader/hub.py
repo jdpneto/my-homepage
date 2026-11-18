@@ -9,7 +9,7 @@ from pathlib import Path
 
 from reolink_aio.api import Host
 from reolink_aio.const import UNKNOWN
-from reolink_aio.exceptions import ReolinkError
+from reolink_aio.exceptions import CredentialsInvalidError, ReolinkError
 from reolink_aio.typings import VOD_trigger
 
 from .config import Config
@@ -25,6 +25,10 @@ CONNECT_TIMEOUT = 60
 
 class HubError(Exception):
     """The hub could not be reached, refused, or misbehaved."""
+
+
+class HubAuthError(HubError):
+    """The hub rejected the username/password. Retry slowly: the hub locks out repeated failures."""
 
 
 def clips_from_search(channel: int, camera_name: str, camera_id: str, vod_by_trigger: dict) -> list[Clip]:
@@ -64,6 +68,17 @@ class ReolinkHub:
         self._host = host
         log.info("connected to hub %s (%s, firmware %s), channels %s",
                  self._cfg.hub_host, host.model, host.sw_version, host.channels)
+
+    async def now(self) -> datetime:
+        """The hub's own local wall-clock time (naive), the clock its clip timestamps use."""
+        host = self._require()
+        current = host.time()
+        if current is None:
+            try:
+                current = await asyncio.wait_for(host.async_get_time(), SEARCH_TIMEOUT)
+            except BaseException as exc:
+                raise self._wrap("get hub time", exc) from exc
+        return current.replace(tzinfo=None)
 
     async def info(self) -> dict:
         host = self._require()
@@ -118,6 +133,8 @@ class ReolinkHub:
     def _wrap(what: str, exc: BaseException) -> BaseException:
         if isinstance(exc, (asyncio.CancelledError, KeyboardInterrupt, SystemExit)):
             return exc
+        if isinstance(exc, CredentialsInvalidError):
+            return HubAuthError(f"{what}: hub rejected the username/password ({exc})")
         if isinstance(exc, (ReolinkError, HubWriteBlocked, OSError, asyncio.TimeoutError)):
             return HubError(f"{what}: {type(exc).__name__}: {exc}")
         return HubError(f"{what}: unexpected {type(exc).__name__}: {exc}")
