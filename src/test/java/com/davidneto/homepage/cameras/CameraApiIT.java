@@ -205,4 +205,14 @@ class CameraApiIT {
     void sessionWritesNeedCsrf() throws Exception {
         mvc.perform(put("/api/cameras/clips/" + newestId() + "/keep").with(admin)).andExpect(status().isForbidden());
     }
+
+    @Test
+    void testAlertEndpointReportsNotSentWithoutTopic() throws Exception {
+        String body = mvc.perform(org.springframework.test.web.servlet.request.MockMvcRequestBuilders
+                        .post("/api/cameras/alerts/test").with(admin).with(csrf()))
+                .andExpect(status().isOk()).andReturn().getResponse().getContentAsString();
+        assertThat(json.readTree(body).get("sent").asBoolean()).isFalse();
+        mvc.perform(org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post("/api/cameras/alerts/test"))
+                .andExpect(status().isUnauthorized());
+    }
 }
