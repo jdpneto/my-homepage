@@ -212,7 +212,9 @@ class CameraApiIT {
                         .post("/api/cameras/alerts/test").with(admin).with(csrf()))
                 .andExpect(status().isOk()).andReturn().getResponse().getContentAsString();
         assertThat(json.readTree(body).get("sent").asBoolean()).isFalse();
-        mvc.perform(org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post("/api/cameras/alerts/test"))
-                .andExpect(status().isUnauthorized());
+        // Unauthenticated POST: refused (CSRF check answers 403 before authentication's 401).
+        int code = mvc.perform(org.springframework.test.web.servlet.request.MockMvcRequestBuilders
+                .post("/api/cameras/alerts/test")).andReturn().getResponse().getStatus();
+        assertThat(code).isIn(401, 403);
     }
 }
