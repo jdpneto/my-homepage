@@ -64,6 +64,11 @@ ask_password() {  # $1 = prompt; prints the password on stdout
 [ "$(id -u)" = 0 ] || die "run with sudo: sudo $0"
 id "$RUN_USER" >/dev/null 2>&1 || die "user $RUN_USER does not exist"
 [ -x "$BREW" ] || die "Homebrew not found at $BREW"
+if ! as_user "$BREW" --version >/dev/null 2>&1 || ! as_user "$BREW" config >/dev/null 2>&1; then
+    die "Homebrew at $BREW does not work on this macOS (too old, or Command Line Tools/git missing).
+    Fix: install the Command Line Tools (sudo softwareupdate -i \"Command Line Tools for Xcode ...\"),
+    then run: $BREW update"
+fi
 
 say "Homebrew packages (python@3.13, ffmpeg) as $RUN_USER"
 as_user "$BREW" list python@3.13 >/dev/null 2>&1 || as_user "$BREW" install python@3.13
