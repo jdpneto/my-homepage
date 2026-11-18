@@ -1,6 +1,7 @@
 package com.davidneto.homepage.webdav;
 
 import com.davidneto.homepage.repository.WebDavUserRepository;
+import com.davidneto.homepage.security.LoginRateLimiter;
 import jakarta.servlet.FilterChain;
 import jakarta.servlet.ServletException;
 import jakarta.servlet.http.HttpServletRequest;
@@ -23,8 +24,9 @@ import java.util.Set;
  *   <li>Nobody may write, move or copy onto {@value PerUserFileResourceFactory#VOLUME_MARKER}
  *       (it is what makes a folder protected, so users must not be able to create it).</li>
  *   <li>In a protected folder, DELETE, MOVE and COPY are refused once the password has been
- *       verified. A wrong password is passed on to Milton for its normal 401, so this filter
- *       never reveals which accounts are protected.</li>
+ *       verified. A wrong password, or an account/IP the login rate limiter currently blocks, is
+ *       passed on to Milton for its normal 401 — so this filter reveals nothing (no account
+ *       enumeration, no password oracle past a lockout).</li>
  *   <li>Fails closed: a destructive request with an Authorization header this filter cannot
  *       read is refused, so a lenient parser further down cannot be used to slip past.</li>
  * </ul>
@@ -40,12 +42,14 @@ public class WebDavProtectionFilter extends OncePerRequestFilter {
     private final PerUserFileResourceFactory factory;
     private final WebDavUserRepository users;
     private final PasswordEncoder encoder;
+    private final LoginRateLimiter limiter;
 
     public WebDavProtectionFilter(PerUserFileResourceFactory factory, WebDavUserRepository users,
-                                  PasswordEncoder encoder) {
+                                  PasswordEncoder encoder, LoginRateLimiter limiter) {
         this.factory = factory;
         this.users = users;
         this.encoder = encoder;
+        this.limiter = limiter;
     }
 
     @Override
@@ -54,7 +58,7 @@ public class WebDavProtectionFilter extends OncePerRequestFilter {
         String method = request.getMethod().toUpperCase(Locale.ROOT);
 
         if (!READ_ONLY.contains(method)
-                && (isMarker(request.getRequestURI()) || isMarker(destinationPath(request)))) {
+                && (isMarker(decodedPath(request)) || isMarker(destinationPath(request)))) {
             forbid(response, method, request.getRequestURI(), null, "the volume marker cannot be written");
             return;
         }
@@ -67,7 +71,9 @@ public class WebDavProtectionFilter extends OncePerRequestFilter {
                     forbid(response, method, request.getRequestURI(), null, "unreadable credentials");
                     return;
                 }
-                if (factory.isProtected(creds[0]) && passwordMatches(creds[0], creds[1])) {
+                boolean allowedToTry = limiter.check(request.getRemoteAddr(), creds[0]).kind()
+                        == LoginRateLimiter.DecisionKind.ALLOW;
+                if (allowedToTry && factory.isProtected(creds[0]) && passwordMatches(creds[0], creds[1])) {
                     forbid(response, method, request.getRequestURI(), creds[0],
                             "protected folder: deleting, moving and copying are disabled");
                     return;
@@ -91,12 +97,20 @@ public class WebDavProtectionFilter extends OncePerRequestFilter {
         return last.equalsIgnoreCase(PerUserFileResourceFactory.VOLUME_MARKER);
     }
 
+    /** The servlet-decoded path (no %-escapes, no ;params) — the name Milton will actually use. */
+    private static String decodedPath(HttpServletRequest request) {
+        String info = request.getPathInfo();
+        return info != null ? info : request.getServletPath();
+    }
+
     private static String destinationPath(HttpServletRequest request) {
         String dest = request.getHeader("Destination");
         if (dest == null) return null;
         try {
-            String path = URI.create(dest).getPath();
-            return path != null ? path : dest;
+            String path = URI.create(dest).getPath(); // decodes %-escapes
+            if (path == null) return dest;
+            int semi = path.indexOf(';');
+            return semi >= 0 ? path.substring(0, semi) : path;
         } catch (IllegalArgumentException e) {
             return dest;
         }

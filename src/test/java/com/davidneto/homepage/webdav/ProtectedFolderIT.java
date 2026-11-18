@@ -218,4 +218,22 @@ class ProtectedFolderIT {
         assertThat(dav("PUT", "volume-marker.txt", "cameras", "cameras-password-1", "x").statusCode()).isEqualTo(403);
         assertThat(Files.readString(camerasRoot.resolve("volume-marker.txt"))).startsWith("camera clips live");
     }
+
+    @Test
+    void encodedMarkerNameIsAlsoRefused() throws Exception {
+        assertThat(dav("PUT", "volume%2Dmarker.txt", "plain", "plain-password-1", "fake").statusCode()).isEqualTo(403);
+        assertThat(dav("PUT", "VOLUME-MARKER.TXT", "plain", "plain-password-1", "fake").statusCode()).isEqualTo(403);
+        assertThat(plainRoot.resolve("volume-marker.txt")).doesNotExist();
+    }
+
+    @Test
+    void lockedOutAccountGetsNoPasswordOracle() throws Exception {
+        for (int i = 0; i < 12; i++) {
+            dav("PROPFIND", "", "cameras", "wrong-" + i, null, "Depth", "0");
+        }
+        // Correct password while locked out: must look exactly like any other refused login.
+        HttpResponse<String> r = dav("DELETE", "Garage/2026-11-18/21-45-49.mp4", "cameras", "cameras-password-1", null);
+        assertThat(r.statusCode()).isEqualTo(401);
+        assertThat(clip).exists();
+    }
 }
