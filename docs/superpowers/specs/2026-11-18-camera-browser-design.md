@@ -66,6 +66,7 @@ Single user: David. He is not distributing the apps; he installs them on his own
 ### Phase 1 — Protect the recordings (agreed)
 1. **Protected WebDAV folders.** `WebDavUserService.delete`, `clearData` and `clearDataByUsername` refuse (clear error, nothing deleted) when the user's root contains `volume-marker.txt`. The admin page shows such users as "protected — on the camera volume" and hides/disables Delete and Clear data for them. Removing them requires a deliberate server-side step (documented, not in the UI).
 2. **Single-file protection on WebDAV (my call, from David's "do not delete the camera recordings"):** for protected users (root contains `volume-marker.txt`) WebDAV `DELETE` and `MOVE` are refused (HTTP 403). `MKCOL` and `PUT` stay allowed — the uploader needs `PUT` overwrite for its crash-retry (it re-uploads the same clip to the same path). Deleting clips happens only through the Phase 2 API/web/app, which go through the app, not WebDAV. Consequence: David can't delete clips from Finder over WebDAV.
+   - **Removing protection deliberately** (only if the recordings are really to be wiped): on the VPS, `rm /mnt/HC_Volume_107526857/cameras/volume-marker.txt`. The folder is then unprotected, the uploader stops uploading (it refuses without the marker), and the admin page offers Delete/Clear again. Recreate the marker with its exact text to protect it again.
 3. **`deploy.sh --full`:** run the camera-volume check **before** `compose down`/volume removal; print that camera recordings on `/mnt/HC_Volume_107526857` are not touched; add "recreate WebDAV user `cameras` with the same password and quota 14336 MB" to the after-steps (pgdata wipe removes the account; recreating a user does not touch its folder).
 
 ### Phase 2 — Server: clip index, API, cleanup, disk status
@@ -120,6 +121,14 @@ Single user: David. He is not distributing the apps; he installs them on his own
 - Video plays from `GET clips/{id}/video` with the bearer token header; Save/Share download the file first (show progress).
 - Built and installed from this Mac: `flutter run`/`flutter install` to the Android phone; Xcode/`flutter run` with David's Apple team to the iPhone (his licence; no TestFlight/App Store).
 - Handles: expired/revoked token → back to sign in; offline → cached list shown read-only with a banner.
+
+### API as built (after the final review — for plans 2 and 3)
+- `GET clips` paging: `nextBefore` is an opaque string cursor (`<start epoch ms>_<id>`), passed back as `before=`; it stays valid if that clip is deleted; malformed → 400.
+- `GET cameras` → `[{"name": "Garage", "cameraId": "…"}]`.
+- `/admin/**` and `/api/cameras/**` accept only the real admin login (ROLE_ADMIN); the family `/mae` password no longer opens `/admin`.
+- Alerts: `uploader_silent` (60 min grace after app start), `uploader_failing` (heartbeat `last_ok` older than 60 min), `hub_down`, `hub_clock` (hub clock off by > 1 h), `volume_missing`, `disk_volume`, `disk_quota`, `disk_root`, `cleanup_failed`; undelivered pushes are retried every check.
+- Cleanup deletes a clip only when it is older than 30 days by the hub timestamp **and** by its arrival time on the VPS; clips without a readable `.json` are removed by arrival time; kept clips never.
+- WebDAV in the camera folder: uploads are atomic; PUT cannot write `.keep`, overwrite a kept clip, or empty an existing file.
 
 ## 6. Constraints
 
