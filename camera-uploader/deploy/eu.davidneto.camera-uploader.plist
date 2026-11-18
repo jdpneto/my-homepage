@@ -7,7 +7,7 @@
 
     <key>ProgramArguments</key>
     <array>
-        <string>/opt/camera-uploader/venv/bin/camera-uploader</string>
+        <string>/opt/camera-uploader/current/venv/bin/camera-uploader</string>
         <string>--config</string>
         <string>/usr/local/etc/camera-uploader/config.toml</string>
     </array>
