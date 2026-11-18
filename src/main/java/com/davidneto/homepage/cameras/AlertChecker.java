@@ -51,7 +51,7 @@ public class AlertChecker {
         this.clock = clock;
     }
 
-    @Scheduled(fixedDelay = 300_000, initialDelay = 60_000)
+    @Scheduled(fixedDelayString = "${app.cameras.alert-delay-ms:300000}", initialDelayString = "${app.cameras.alert-initial-delay-ms:60000}")
     public void scheduled() {
         try {
             check();

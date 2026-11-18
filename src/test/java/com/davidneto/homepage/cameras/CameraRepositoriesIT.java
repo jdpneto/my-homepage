@@ -19,6 +19,13 @@ class CameraRepositoriesIT {
     @Autowired CameraTokenRepository tokens;
     @Autowired AlertStateRepository alerts;
 
+    @org.junit.jupiter.api.BeforeEach
+    void empty() {
+        clips.deleteAll();
+        tokens.deleteAll();
+        alerts.deleteAll();
+    }
+
     @Test
     void savesAndFindsClipByStem() {
         CameraClip c = new CameraClip();

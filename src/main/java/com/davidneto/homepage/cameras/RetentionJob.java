@@ -41,7 +41,7 @@ public class RetentionJob {
         this.clock = clock;
     }
 
-    @Scheduled(cron = "0 30 3 * * *")
+    @Scheduled(cron = "${app.cameras.cleanup-cron:0 30 3 * * *}")
     public void scheduled() {
         try {
             run();

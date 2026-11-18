@@ -42,7 +42,7 @@ public class ClipIndexer {
         this.clock = clock;
     }
 
-    @Scheduled(fixedDelay = 30_000, initialDelay = 5_000)
+    @Scheduled(fixedDelayString = "${app.cameras.index-delay-ms:30000}", initialDelayString = "${app.cameras.index-initial-delay-ms:5000}")
     public void scheduled() {
         try {
             reconcile();
