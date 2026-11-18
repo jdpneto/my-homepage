@@ -57,6 +57,7 @@ This will WIPE the following Docker volumes on the VPS:
 
 Preserved:
   - ${COMPOSE_PROJECT}_caddy_data   (Let's Encrypt certs — avoids LE rate limit)
+  - Camera recordings on /mnt/HC_Volume_107526857 are NOT touched.
 
 This is irreversible. Make sure you have a pg_dump or volume backup.
 
@@ -82,15 +83,6 @@ echo ">>> git fetch && reset to origin/main"
 git fetch origin
 git reset --hard origin/main
 
-if [ "$MODE" = "full" ]; then
-    echo ">>> compose down"
-    docker compose down
-    echo ">>> wiping data volumes (keeping caddy_data)"
-    for v in "${COMPOSE_PROJECT}_pgdata" "${COMPOSE_PROJECT}_uploads" "${COMPOSE_PROJECT}_webdav_data"; do
-        docker volume rm "$v" 2>/dev/null && echo "  removed $v" || echo "  $v: not present"
-    done
-fi
-
 echo ">>> checking camera clip volume"
 # The app bind-mounts /mnt/HC_Volume_107526857/cameras. The volume is mounted
 # with `nofail`, so if Hetzner fails to attach it the path would silently be an
@@ -100,6 +92,15 @@ if ! mountpoint -q "$CAMERA_VOLUME" || [ ! -f "$CAMERA_VOLUME/cameras/volume-mar
     echo "!!! $CAMERA_VOLUME is not mounted or $CAMERA_VOLUME/cameras/volume-marker.txt is missing." >&2
     echo "!!! Refusing to deploy: camera clips would land on the root disk." >&2
     exit 1
+fi
+
+if [ "$MODE" = "full" ]; then
+    echo ">>> compose down"
+    docker compose down
+    echo ">>> wiping data volumes (keeping caddy_data)"
+    for v in "${COMPOSE_PROJECT}_pgdata" "${COMPOSE_PROJECT}_uploads" "${COMPOSE_PROJECT}_webdav_data"; do
+        docker volume rm "$v" 2>/dev/null && echo "  removed $v" || echo "  $v: not present"
+    done
 fi
 
 echo ">>> pulling base images (caddy, postgres)"
@@ -168,6 +169,8 @@ if [ "$MODE" = "full" ]; then
        and ADMIN_PASSWORD from the VPS .env file.
     2. Recreate WebDAV users at https://davidneto.eu/admin/webdav-users.
     3. Recreate blog posts, pages, social links as needed.
+    4. Recreate WebDAV user "cameras" with the SAME password and quota 14336 MB
+       (the Mac mini uploader keeps its config; its recordings were not touched).
 EOF
 else
     echo ">>> Safe redeploy complete. All data preserved."
