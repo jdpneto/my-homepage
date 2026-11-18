@@ -94,21 +94,40 @@ fi
 echo ">>> pulling base images (caddy, postgres)"
 docker compose pull caddy postgres
 
-echo ">>> rebuilding app image (no cache)"
-docker compose build --no-cache app
+echo ">>> rebuilding app image (no cache, fresh base images)"
+# --pull: always fetch the latest JDK base images, otherwise the VPS keeps
+# building on a stale cached base and never receives JDK security fixes.
+docker compose build --pull --no-cache app
 
 echo ">>> starting stack"
 docker compose up -d
 
-echo ">>> waiting for services to settle"
-sleep 8
-
 echo ">>> compose ps"
 docker compose ps
 
-echo ">>> last 40 lines of app logs"
-docker compose logs --tail=40 app
+echo ">>> app JVM version"
+docker compose exec -T app java -version 2>&1 || true
 REMOTE
+
+echo ""
+echo ">>> Waiting for app to become reachable (up to 120s)"
+deadline=$(( $(date +%s) + 120 ))
+last_code=000
+while :; do
+    last_code="$(curl -ksSI -o /dev/null -w '%{http_code}' "https://davidneto.eu/admin/login" || true)"
+    # 2xx/3xx means Caddy reached the app and got a real response.
+    if [[ "$last_code" =~ ^[23] ]]; then
+        echo "  app reachable (got $last_code)"
+        break
+    fi
+    if (( $(date +%s) >= deadline )); then
+        echo "  timed out after 120s (last code: $last_code); continuing with checks anyway"
+        echo "  recent app logs:"
+        ssh -T "$SSH_TARGET" "cd $REMOTE_REPO && docker compose logs --tail=40 app" || true
+        break
+    fi
+    sleep 3
+done
 
 echo ""
 echo ">>> Post-deploy sanity checks"
