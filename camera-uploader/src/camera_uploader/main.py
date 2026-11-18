@@ -14,6 +14,7 @@ from pathlib import Path
 from . import __version__
 from .config import Config, ConfigError, load_config
 from .cycle import run_cycle
+from .heartbeat import Heartbeat
 from .hub import HubAuthError, HubError, ReolinkHub
 from .state import StateStore
 from .webdav import AuthError, QuotaFullError, TransientError, WebDavClient, WebDavError
@@ -84,9 +85,11 @@ async def run_forever(cfg: Config, hub_factory, dav_factory, sleep=asyncio.sleep
     dav = dav_factory(cfg)
     hub = None
     consecutive = 0
+    heartbeat = Heartbeat()
     log.info("camera-uploader %s starting: %r", __version__, cfg)
     try:
         while True:
+            hub_ok, error = None, None
             try:
                 if hub is None:
                     hub = hub_factory(cfg)
@@ -97,11 +100,14 @@ async def run_forever(cfg: Config, hub_factory, dav_factory, sleep=asyncio.sleep
                              result.uploaded, result.pending, result.failed, result.skipped)
                 consecutive = 0
                 delay = cfg.poll_seconds
+                hub_ok = True
             except asyncio.CancelledError:
                 raise
             except Exception as exc:
                 consecutive += 1
                 delay = backoff_seconds(exc, consecutive)
+                hub_ok = False if isinstance(exc, HubError) else None
+                error = f"{type(exc).__name__}: {exc}"[:300]
                 known = isinstance(exc, (HubError, WebDavError))
                 if isinstance(exc, HubError) or not known:
                     # Hub trouble or something unexpected: start a fresh hub session next time.
@@ -110,6 +116,10 @@ async def run_forever(cfg: Config, hub_factory, dav_factory, sleep=asyncio.sleep
                 level = logging.WARNING if isinstance(exc, (HubError, TransientError)) else logging.ERROR
                 log.log(level, "%s: %s - retrying in %ds (failure #%d)", type(exc).__name__, exc, delay, consecutive,
                         exc_info=not known)
+            now = clock().astimezone()
+            heartbeat.record(hub_ok, error, getattr(hub, "camera_count", None), now)
+            if not (error or "").startswith("AuthError"):  # would only add a failed WebDAV login
+                await heartbeat.maybe_send(dav, now)
             await sleep(delay)
     finally:
         await _close_hub(hub)

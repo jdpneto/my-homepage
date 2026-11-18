@@ -80,6 +80,10 @@ class ReolinkHub:
                 raise self._wrap("get hub time", exc) from exc
         return current.replace(tzinfo=None)
 
+    @property
+    def camera_count(self) -> int | None:
+        return len(self._host.channels) if self._host is not None else None
+
     async def info(self) -> dict:
         host = self._require()
         return {"model": host.model, "firmware": host.sw_version}

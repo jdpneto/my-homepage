@@ -52,6 +52,10 @@ class FakeDav:
             raise self.exists_exc
         return "camera clips live on the 15 GB volume - do not delete\n"
 
+    async def put_bytes(self, path, data, content_type):
+        self.puts = getattr(self, "puts", [])
+        self.puts.append(path)
+
     async def aclose(self):
         pass
 
@@ -237,3 +241,64 @@ def test_setup_logging_silences_udp_spam_and_keeps_launchd_stderr_quiet(tmp_path
     assert logging.getLogger("reolink_aio.baichuan.udp_protocol").getEffectiveLevel() >= logging.ERROR
     console = [h for h in logging.getLogger().handlers if not hasattr(h, "baseFilename")]
     assert console and all(h.level >= logging.ERROR for h in console)  # launchd.err.log is never rotated
+
+
+async def test_run_forever_sends_heartbeat_even_when_hub_down(cfg):
+    import json as _json
+
+    class RecordingDav(FakeDav):
+        def __init__(self):
+            super().__init__()
+            self.puts = []
+
+        async def put_bytes(self, path, data, content_type):
+            self.puts.append((path, _json.loads(data)))
+
+    dav = RecordingDav()
+    sleep, _ = sleeper(2)
+    with pytest.raises(Stop):
+        await run_forever(cfg, lambda c: FakeHub(fail_connect=True), lambda c: dav, sleep=sleep, clock=lambda: NOW)
+    beats = [body for path, body in dav.puts if path == "heartbeat.json"]
+    assert beats, "no heartbeat sent"
+    assert beats[0]["hub_ok"] is False
+    assert "login refused" in beats[0]["last_error"]
+    assert beats[0]["hub_error_since"] is not None
+
+
+async def test_run_forever_heartbeat_ok_after_good_cycle(cfg):
+    import json as _json
+
+    class RecordingDav(FakeDav):
+        def __init__(self):
+            super().__init__()
+            self.puts = []
+
+        async def put_bytes(self, path, data, content_type):
+            self.puts.append((path, _json.loads(data)))
+
+    dav = RecordingDav()
+    sleep, _ = sleeper(1)
+    with pytest.raises(Stop):
+        await run_forever(cfg, lambda c: FakeHub(), lambda c: dav, sleep=sleep, clock=lambda: NOW)
+    beats = [body for path, body in dav.puts if path == "heartbeat.json"]
+    assert beats and beats[0]["hub_ok"] is True and beats[0]["last_error"] is None
+
+
+async def test_no_heartbeat_after_webdav_auth_error(cfg):
+    dav = FakeDav(AuthError("HTTP 401"))
+    sleep, _ = sleeper(2)
+    with pytest.raises(Stop):
+        await run_forever(cfg, lambda c: FakeHub(), lambda c: dav, sleep=sleep, clock=lambda: NOW)
+    assert getattr(dav, "puts", []) == []  # a heartbeat would just be another failed login
+
+
+async def test_heartbeat_bug_never_stops_uploads():
+    from camera_uploader.heartbeat import Heartbeat
+
+    class Broken:
+        async def put_bytes(self, *a):
+            raise RuntimeError("unexpected")
+
+    hb = Heartbeat(0)
+    hb.record(True, None, 4, NOW.astimezone())
+    assert await hb.maybe_send(Broken(), NOW.astimezone()) is False
