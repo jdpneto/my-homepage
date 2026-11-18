@@ -14,8 +14,6 @@ import org.springframework.stereotype.Component;
 import org.springframework.web.filter.OncePerRequestFilter;
 
 import java.io.IOException;
-import java.nio.charset.StandardCharsets;
-import java.util.Base64;
 import java.util.Optional;
 
 /**
@@ -63,7 +61,7 @@ public class WebDavQuotaFilter extends OncePerRequestFilter {
             return;
         }
 
-        String username = parseBasicAuthUsername(request.getHeader("Authorization"));
+        String username = BasicAuthUsername.parse(request.getHeader("Authorization"));
         if (username == null) {
             chain.doFilter(request, response);
             return;
@@ -101,28 +99,6 @@ public class WebDavQuotaFilter extends OncePerRequestFilter {
         response.setStatus(507);
         response.setContentType("text/plain; charset=utf-8");
         response.getWriter().write("Insufficient storage: " + quotaMb + " MB quota exceeded");
-    }
-
-    /**
-     * Returns the username from a Basic auth header, or {@code null} if the
-     * header is missing, malformed, not Basic, or otherwise un-parseable.
-     */
-    private static String parseBasicAuthUsername(String header) {
-        if (header == null) return null;
-        String prefix = "Basic ";
-        if (!header.regionMatches(true, 0, prefix, 0, prefix.length())) return null;
-        String b64 = header.substring(prefix.length()).trim();
-        if (b64.isEmpty()) return null;
-        byte[] decoded;
-        try {
-            decoded = Base64.getDecoder().decode(b64);
-        } catch (IllegalArgumentException e) {
-            return null;
-        }
-        String creds = new String(decoded, StandardCharsets.UTF_8);
-        int colon = creds.indexOf(':');
-        if (colon <= 0) return null;
-        return creds.substring(0, colon);
     }
 
     /**

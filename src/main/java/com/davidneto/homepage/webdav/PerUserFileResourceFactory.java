@@ -117,6 +117,27 @@ public class PerUserFileResourceFactory implements ResourceFactory {
         }
     }
 
+    /** Marker file whose presence makes a user's folder the protected camera volume. */
+    public static final String VOLUME_MARKER = "volume-marker.txt";
+
+    /**
+     * True when the user's folder is the camera volume (contains {@value #VOLUME_MARKER}).
+     * Such folders must never be wiped, and WebDAV DELETE/MOVE are refused in them.
+     */
+    public boolean isProtected(String username) {
+        if (username == null) return false;
+        File root = new File(rootDir);
+        File userRoot = new File(root, username);
+        try {
+            File canonicalUserRoot = userRoot.getCanonicalFile();
+            File parent = canonicalUserRoot.getParentFile();
+            if (parent == null || !parent.equals(root.getCanonicalFile())) return false;
+            return Files.isRegularFile(canonicalUserRoot.toPath().resolve(VOLUME_MARKER));
+        } catch (IOException e) {
+            return true; // cannot tell: err on the side of not deleting
+        }
+    }
+
     /**
      * Total bytes currently used by the named user's WebDAV directory.
      * Returns 0 if the user has not yet stored anything (or username is invalid).

@@ -68,6 +68,7 @@ public class WebDavUserService {
     public void delete(Long id) {
         WebDavUser u = repo.findById(id).orElseThrow(
                 () -> new IllegalArgumentException("unknown user id: " + id));
+        refuseIfProtected(u.getUsername());
         // Wipe files first: if disk deletion fails we abort without committing
         // the DB row removal, so the admin can retry rather than end up with
         // a deleted account whose data is still on disk for the next user
@@ -80,6 +81,7 @@ public class WebDavUserService {
     public void clearData(Long id) {
         WebDavUser u = repo.findById(id).orElseThrow(
                 () -> new IllegalArgumentException("unknown user id: " + id));
+        refuseIfProtected(u.getUsername());
         storage.clearUserData(u.getUsername());
     }
 
@@ -90,6 +92,7 @@ public class WebDavUserService {
      * request input.
      */
     public void clearDataByUsername(String username) {
+        refuseIfProtected(username);
         storage.clearUserData(username);
     }
 
@@ -104,11 +107,16 @@ public class WebDavUserService {
      */
     public List<UserUsageView> listWithUsage() {
         return repo.findAllByOrderByUsernameAsc().stream()
-                .map(u -> new UserUsageView(u, storage.currentUsageBytes(u.getUsername())))
+                .map(u -> new UserUsageView(u, storage.currentUsageBytes(u.getUsername()),
+                        storage.isProtected(u.getUsername())))
                 .toList();
     }
 
-    public record UserUsageView(WebDavUser user, long usageBytes) {
+    private void refuseIfProtected(String username) {
+        if (storage.isProtected(username)) throw new ProtectedFolderException(username);
+    }
+
+    public record UserUsageView(WebDavUser user, long usageBytes, boolean protectedFolder) {
         public long usageMb() { return usageBytes / (1024L * 1024L); }
     }
 

@@ -54,4 +54,17 @@ public class MiltonConfig {
         reg.setOrder(0);
         return reg;
     }
+
+    /**
+     * Protection runs first: DELETE/MOVE in the camera volume are refused
+     * before quota checks, authentication or Milton see the request.
+     */
+    @Bean
+    public FilterRegistrationBean<WebDavProtectionFilter> webDavProtectionFilterRegistration(WebDavProtectionFilter filter) {
+        FilterRegistrationBean<WebDavProtectionFilter> reg = new FilterRegistrationBean<>(filter);
+        reg.addUrlPatterns("/webdav/*");
+        reg.setName("webdav-protection");
+        reg.setOrder(-1);
+        return reg;
+    }
 }

@@ -67,6 +67,8 @@ public class WebDavUserAdminController {
         try {
             service.delete(id);
             redirect.addFlashAttribute("message", "User and their files deleted.");
+        } catch (com.davidneto.homepage.service.ProtectedFolderException e) {
+            redirect.addFlashAttribute("error", e.getMessage());
         } catch (IllegalArgumentException e) {
             redirect.addFlashAttribute("error", e.getMessage());
         } catch (RuntimeException e) {
@@ -80,6 +82,8 @@ public class WebDavUserAdminController {
         try {
             service.clearData(id);
             redirect.addFlashAttribute("message", "User's files cleared.");
+        } catch (com.davidneto.homepage.service.ProtectedFolderException e) {
+            redirect.addFlashAttribute("error", e.getMessage());
         } catch (IllegalArgumentException e) {
             redirect.addFlashAttribute("error", e.getMessage());
         } catch (RuntimeException e) {

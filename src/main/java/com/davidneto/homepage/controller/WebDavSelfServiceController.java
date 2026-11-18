@@ -55,7 +55,12 @@ public class WebDavSelfServiceController {
             // equalization, and set Retry-After on rate-limited responses.
             return unauthorized();
         }
-        users.clearDataByUsername(wp.username());
+        try {
+            users.clearDataByUsername(wp.username());
+        } catch (com.davidneto.homepage.service.ProtectedFolderException e) {
+            log.warn("webdav self-service clear-data refused for protected user={} ip={}", wp.username(), ip);
+            return ResponseEntity.status(403).build();
+        }
         log.info("webdav self-service clear-data user={} ip={}", wp.username(), ip);
         return ResponseEntity.noContent().build();
     }
