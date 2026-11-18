@@ -80,8 +80,11 @@ public class GallerySecurityConfig {
         return http.build();
     }
 
-    @Bean
-    public AuthenticationProvider galleryAuthenticationProvider() {
+    /**
+     * Deliberately NOT a bean: as a bean Spring made it the global provider, so it also served
+     * /admin/login (accepting the family password there). It belongs to the /mae chain only.
+     */
+    private AuthenticationProvider galleryAuthenticationProvider() {
         return new AuthenticationProvider() {
             @Override
             public Authentication authenticate(Authentication auth) throws AuthenticationException {

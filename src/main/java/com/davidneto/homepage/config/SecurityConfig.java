@@ -10,6 +10,8 @@ import org.springframework.context.annotation.Configuration;
 import org.springframework.core.annotation.Order;
 import org.springframework.security.config.annotation.web.builders.HttpSecurity;
 import org.springframework.security.core.userdetails.User;
+import org.springframework.security.authentication.ProviderManager;
+import org.springframework.security.authentication.dao.DaoAuthenticationProvider;
 import org.springframework.security.core.userdetails.UserDetailsService;
 import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
 import org.springframework.security.crypto.password.PasswordEncoder;
@@ -33,13 +35,20 @@ public class SecurityConfig {
 
     @Bean
     @Order(2)
-    public SecurityFilterChain filterChain(HttpSecurity http, LoginRateLimiter limiter) throws Exception {
+    public SecurityFilterChain filterChain(HttpSecurity http, LoginRateLimiter limiter,
+                                           UserDetailsService userDetailsService,
+                                           PasswordEncoder passwordEncoder) throws Exception {
+        // /admin authenticates only the admin user (username AND password) and grants ROLE_ADMIN.
+        DaoAuthenticationProvider adminProvider = new DaoAuthenticationProvider(userDetailsService);
+        adminProvider.setPasswordEncoder(passwordEncoder);
         http
+            .authenticationManager(new ProviderManager(adminProvider))
             .authorizeHttpRequests(auth -> auth
                 .requestMatchers("/webdav/**").permitAll()
                 .requestMatchers("/api/webdav/**").permitAll()
                 .requestMatchers("/gallery-drop/**").permitAll()
-                .requestMatchers("/admin/**").authenticated()
+                .requestMatchers("/admin/login").permitAll()
+                .requestMatchers("/admin/**").hasRole("ADMIN")
                 .anyRequest().permitAll()
             )
             .formLogin(form -> form
