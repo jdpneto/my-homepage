@@ -49,3 +49,24 @@ def test_config_is_frozen(config_path):
     with pytest.raises(Exception):
         cfg.hub_host = "x"  # type: ignore[misc]
     assert isinstance(cfg, Config)
+
+
+def test_render_config_roundtrips_awkward_passwords(tmp_path):
+    from camera_uploader.config import render_config
+    from conftest import EXAMPLE
+
+    hub_pw = 'a"b\\c$v5wE é'
+    dav_pw = "x'y\tz"
+    path = tmp_path / "c.toml"
+    path.write_text(render_config(EXAMPLE.read_text(), hub_pw, dav_pw))
+    cfg = load_config(path)
+    assert cfg.hub_password == hub_pw
+    assert cfg.webdav_password == dav_pw
+    assert cfg.hub_host == "192.168.1.24" and cfg.webdav_user == "cameras"
+
+
+def test_render_config_requires_both_placeholders():
+    from camera_uploader.config import render_config
+
+    with pytest.raises(ConfigError):
+        render_config('[hub]\npassword = "already-set"\n', "a", "b")

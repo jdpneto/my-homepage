@@ -1,0 +1,42 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>eu.davidneto.camera-uploader</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>/opt/camera-uploader/venv/bin/camera-uploader</string>
+        <string>--config</string>
+        <string>/usr/local/etc/camera-uploader/config.toml</string>
+    </array>
+
+    <!-- Runs at boot, before anyone logs in, as the unprivileged user. -->
+    <key>UserName</key>
+    <string>davidneto</string>
+    <key>RunAtLoad</key>
+    <true/>
+    <key>KeepAlive</key>
+    <true/>
+    <key>ThrottleInterval</key>
+    <integer>30</integer>
+    <key>ProcessType</key>
+    <string>Standard</string>
+
+    <key>WorkingDirectory</key>
+    <string>/usr/local/var/camera-uploader</string>
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>PATH</key>
+        <string>/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+        <key>LANG</key>
+        <string>en_US.UTF-8</string>
+    </dict>
+
+    <key>StandardOutPath</key>
+    <string>/usr/local/var/log/camera-uploader/launchd.out.log</string>
+    <key>StandardErrorPath</key>
+    <string>/usr/local/var/log/camera-uploader/launchd.err.log</string>
+</dict>
+</plist>

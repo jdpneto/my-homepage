@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import tomllib
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -39,6 +40,18 @@ class Config:
         )
 
     __str__ = __repr__
+
+
+_PLACEHOLDER = 'password = "CHANGE_ME"'
+
+
+def render_config(template: str, hub_password: str, webdav_password: str) -> str:
+    """Fill the two password placeholders ([hub] first, then [webdav]) with safely escaped TOML strings."""
+    if template.count(_PLACEHOLDER) != 2:
+        raise ConfigError("template must contain exactly two password placeholders ([hub] and [webdav])")
+    # A JSON string literal is a valid TOML basic string (same escapes, incl. \uXXXX).
+    text = template.replace(_PLACEHOLDER, f"password = {json.dumps(hub_password)}", 1)
+    return text.replace(_PLACEHOLDER, f"password = {json.dumps(webdav_password)}", 1)
 
 
 def _require(data: dict[str, Any], section: str, key: str) -> Any:
