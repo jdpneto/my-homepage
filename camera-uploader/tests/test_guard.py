@@ -86,3 +86,62 @@ def test_read_methods_untouched():
     for fn in (Baichuan.search_vod_type, Baichuan.download_mp4, Host.get_host_data,
                Host.login, Host.logout, Baichuan.get_ports):
         assert not getattr(fn, MARK, False), fn.__qualname__
+
+
+# --- final-review fixes ---------------------------------------------------------
+
+def test_ptz_read_getters_are_not_blocked_but_calibrate_is():
+    # get_host_data calls ptz_pan_position/ptz_tilt_position for pan/tilt cameras.
+    install_read_only_guard()
+    for name in ("ptz_pan_position", "ptz_tilt_position", "ptz_presets", "ptz_patrols"):
+        assert not getattr(getattr(Host, name), MARK, False), name
+    assert getattr(Host.ptz_callibrate, MARK, False)
+
+
+def test_unsubscribe_is_not_blocked():
+    # expire_session() -> unsubscribe() runs on every connection error; blocking it masks the real error.
+    install_read_only_guard()
+    assert not getattr(Host.unsubscribe, MARK, False)
+    assert getattr(Host.subscribe, MARK, False)
+
+
+@pytest.mark.parametrize("cls,name", [
+    (Baichuan, "UpgradeOnline"), (Baichuan, "AudioAlarmPlay"), (Baichuan, "SetRecV20"), (Baichuan, "SetPush"),
+    (Baichuan, "PreAlarm"), (Baichuan, "QuickReplyPlay"), (Baichuan, "synchronize_time"), (Baichuan, "snapshot"),
+    (Host, "sync_ntp"), (Host, "webhook_add"), (Host, "webhook_disable"),
+])
+def test_camelcase_and_other_writers_blocked(cls, name):
+    install_read_only_guard()
+    assert hasattr(cls, name), f"{cls.__name__}.{name} no longer exists - update the test"
+    assert getattr(getattr(cls, name), MARK, False), f"{cls.__name__}.{name}"
+
+
+@pytest.mark.parametrize("body,param", [
+    ([{"cmd": "GetTime"}, {"cmd": "GetDevInfo", "action": 0}], None),
+    ([{"cmd": "Login", "param": {}}], None),
+    ([{"cmd": "Logout"}], None),
+    ([{"cmd": "Search", "param": {}}], None),
+    ([], {"cmd": "GetAbility"}),
+])
+def test_http_reads_allowed(body, param):
+    from camera_uploader.guard import check_http_request
+    check_http_request(body, param)  # no exception
+
+
+@pytest.mark.parametrize("body,param", [
+    ([{"cmd": "GetTime"}, {"cmd": "SetNetPort", "param": {}}], None),
+    ([{"cmd": "Reboot"}], None),
+    ([{"cmd": "Upgrade"}], None),
+    ([{"cmd": "PtzCtrl"}], None),
+    ([], {"cmd": "Snap"}),
+    ([{"nocmd": 1}], None),
+])
+def test_http_writes_and_unknowns_blocked(body, param):
+    from camera_uploader.guard import check_http_request
+    with pytest.raises(HubWriteBlocked):
+        check_http_request(body, param)
+
+
+def test_http_send_chunk_is_wrapped():
+    install_read_only_guard()
+    assert getattr(Host.send_chunk, "__camera_uploader_http_checked__", False)
