@@ -302,3 +302,70 @@ async def test_heartbeat_bug_never_stops_uploads():
     hb = Heartbeat(0)
     hb.record(True, None, 4, NOW.astimezone())
     assert await hb.maybe_send(Broken(), NOW.astimezone()) is False
+
+
+async def test_cycle_aborted_is_not_reported_as_hub_down(cfg):
+    import json as _json
+    from camera_uploader.cycle import CycleAborted
+
+    class AbortingHub(FakeHub):
+        async def list_clips(self, start, end):
+            raise CycleAborted("remux: cannot run ffmpeg")
+
+    class RecordingDav(FakeDav):
+        def __init__(self):
+            super().__init__()
+            self.bodies = []
+
+        async def put_bytes(self, path, data, content_type):
+            self.bodies.append(_json.loads(data))
+
+    dav = RecordingDav()
+    sleep, _ = sleeper(1)
+    with pytest.raises(Stop):
+        await run_forever(cfg, lambda c: AbortingHub(), lambda c: dav, sleep=sleep, clock=lambda: NOW)
+    assert dav.bodies and dav.bodies[0]["hub_ok"] is not False
+    assert "ffmpeg" in dav.bodies[0]["last_error"]
+
+
+async def test_heartbeat_time_always_has_an_offset(cfg):
+    import json as _json
+    from datetime import datetime as _dt
+
+    class RecordingDav(FakeDav):
+        def __init__(self):
+            super().__init__()
+            self.bodies = []
+
+        async def put_bytes(self, path, data, content_type):
+            self.bodies.append(_json.loads(data))
+
+    dav = RecordingDav()
+    sleep, _ = sleeper(1)
+    with pytest.raises(Stop):
+        await run_forever(cfg, lambda c: FakeHub(), lambda c: dav, sleep=sleep, clock=lambda: NOW)
+    for key in ("time", "last_ok"):
+        assert _dt.fromisoformat(dav.bodies[0][key]).tzinfo is not None, key
+
+
+async def test_skew_reported_from_hub_clock(cfg):
+    import json as _json
+    from datetime import timedelta as _td
+
+    class SkewedHub(FakeHub):
+        async def now(self):
+            return NOW - _td(days=400)
+
+    class RecordingDav(FakeDav):
+        def __init__(self):
+            super().__init__()
+            self.bodies = []
+
+        async def put_bytes(self, path, data, content_type):
+            self.bodies.append(_json.loads(data))
+
+    dav = RecordingDav()
+    sleep, _ = sleeper(1)
+    with pytest.raises(Stop):
+        await run_forever(cfg, lambda c: SkewedHub(), lambda c: dav, sleep=sleep, clock=lambda: NOW)
+    assert dav.bodies[0]["hub_clock_skew_seconds"] == -400 * 86400

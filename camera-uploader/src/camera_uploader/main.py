@@ -13,7 +13,7 @@ from pathlib import Path
 
 from . import __version__
 from .config import Config, ConfigError, load_config
-from .cycle import run_cycle
+from .cycle import CycleAborted, run_cycle
 from .heartbeat import Heartbeat
 from .hub import HubAuthError, HubError, ReolinkHub
 from .state import StateStore
@@ -25,10 +25,13 @@ DEFAULT_CONFIG = Path("/usr/local/etc/camera-uploader/config.toml")
 CLOCK_SKEW_WARN = 300  # seconds
 
 
-async def _cycle_now(hub, clock) -> datetime:
+async def _cycle_now(hub, clock, heartbeat=None) -> datetime:
     """Use the hub's clock: clip timestamps are hub-local, so the search window must be too."""
     hub_now = await hub.now()
-    skew = abs((hub_now - clock()).total_seconds())
+    signed = (hub_now - clock()).total_seconds()
+    if heartbeat is not None:
+        heartbeat.set_skew(signed)
+    skew = abs(signed)
     if skew > CLOCK_SKEW_WARN:
         log.warning("hub clock differs from this Mac's clock by %.0f s - using the hub clock "
                     "(check the hub's time zone / DST setting)", skew)
@@ -86,6 +89,8 @@ async def run_forever(cfg: Config, hub_factory, dav_factory, sleep=asyncio.sleep
     hub = None
     consecutive = 0
     heartbeat = Heartbeat()
+    heartbeat.started(clock().astimezone())
+    beat_task = asyncio.ensure_future(_background_heartbeat(heartbeat, dav, clock))
     log.info("camera-uploader %s starting: %r", __version__, cfg)
     try:
         while True:
@@ -94,7 +99,8 @@ async def run_forever(cfg: Config, hub_factory, dav_factory, sleep=asyncio.sleep
                 if hub is None:
                     hub = hub_factory(cfg)
                     await hub.connect()
-                result = await run_cycle(hub, dav, store, cfg, await _cycle_now(hub, clock))
+                result = await run_cycle(hub, dav, store, cfg, await _cycle_now(hub, clock, heartbeat),
+                                         on_uploaded=lambda _c: heartbeat.progress(clock().astimezone()))
                 if result.uploaded or result.failed:
                     log.info("cycle: %d uploaded, %d pending, %d failed, %d already done",
                              result.uploaded, result.pending, result.failed, result.skipped)
@@ -106,7 +112,9 @@ async def run_forever(cfg: Config, hub_factory, dav_factory, sleep=asyncio.sleep
             except Exception as exc:
                 consecutive += 1
                 delay = backoff_seconds(exc, consecutive)
-                hub_ok = False if isinstance(exc, HubError) else None
+                # CycleAborted (ffmpeg missing, every clip failing) is a HubError for backoff
+                # purposes, but it says nothing about whether the hub answered.
+                hub_ok = False if isinstance(exc, HubError) and not isinstance(exc, CycleAborted) else None
                 error = f"{type(exc).__name__}: {exc}"[:300]
                 known = isinstance(exc, (HubError, WebDavError))
                 if isinstance(exc, HubError) or not known:
@@ -118,13 +126,24 @@ async def run_forever(cfg: Config, hub_factory, dav_factory, sleep=asyncio.sleep
                         exc_info=not known)
             now = clock().astimezone()
             heartbeat.record(hub_ok, error, getattr(hub, "camera_count", None), now)
-            if not (error or "").startswith("AuthError"):  # would only add a failed WebDAV login
-                await heartbeat.maybe_send(dav, now)
+            heartbeat.suppress((error or "").startswith("AuthError"))  # a PUT would only add a failed login
+            await heartbeat.maybe_send(dav, now)
             await sleep(delay)
     finally:
+        beat_task.cancel()
         await _close_hub(hub)
         await dav.aclose()
         store.close()
+
+
+async def _background_heartbeat(heartbeat, dav, clock, every: float = 60) -> None:
+    """Keeps heartbeats flowing during a long catch-up cycle (they are otherwise sent between cycles)."""
+    while True:
+        await asyncio.sleep(every)
+        try:
+            await heartbeat.maybe_send(dav, clock().astimezone())
+        except Exception as exc:  # never let the heartbeat stop the uploader
+            log.warning("background heartbeat failed: %s", exc)
 
 
 async def run_once(cfg: Config, hub_factory, dav_factory, clock=datetime.now) -> int:

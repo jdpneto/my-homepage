@@ -86,3 +86,35 @@ def test_payload_has_no_password():
     hb.record(False, "HubAuthError: hub rejected the username/password", None, T0)
     text = json.dumps(hb.payload(T0))
     assert "secret" not in text and "password\":" not in text
+
+
+async def test_payload_has_last_ok_and_skew():
+    hb, dav = Heartbeat(0), Dav()
+    hb.started(T0)
+    hb.record(True, None, 4, T0)
+    hb.set_skew(-12.4)
+    await hb.maybe_send(dav, T0)
+    body = dav.puts[-1][1]
+    assert body["last_ok"] == "2026-11-20T12:00:00+01:00"
+    assert body["hub_clock_skew_seconds"] == -12
+
+
+async def test_last_ok_starts_at_start_and_moves_on_progress():
+    hb, dav = Heartbeat(0), Dav()
+    hb.started(T0)
+    hb.record(False, "HubError: x", None, T0 + timedelta(minutes=5))
+    await hb.maybe_send(dav, T0 + timedelta(minutes=5))
+    assert dav.puts[-1][1]["last_ok"] == "2026-11-20T12:00:00+01:00"
+    hb.progress(T0 + timedelta(minutes=7))
+    await hb.maybe_send(dav, T0 + timedelta(minutes=8))
+    assert dav.puts[-1][1]["last_ok"] == "2026-11-20T12:07:00+01:00"
+
+
+async def test_suppressed_heartbeat_sends_nothing():
+    hb, dav = Heartbeat(0), Dav()
+    hb.record(True, None, 4, T0)
+    hb.suppress(True)  # e.g. WebDAV rejected the password: a PUT would only add a failed login
+    assert await hb.maybe_send(dav, T0) is False
+    assert dav.puts == []
+    hb.suppress(False)
+    assert await hb.maybe_send(dav, T0) is True

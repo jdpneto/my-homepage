@@ -51,7 +51,7 @@ class CycleAborted(HubError):
 MAX_CONSECUTIVE_FAILURES = 2
 
 async def run_cycle(hub, dav, store: StateStore, cfg: Config, now: datetime,
-                    remux_fn=remux, tz: tzinfo | None = None) -> CycleResult:
+                    remux_fn=remux, tz: tzinfo | None = None, on_uploaded=None) -> CycleResult:
     # Refuse before touching anything if the 15 GB volume isn't behind the share.
     marker = await dav.get_text(MARKER)
     if marker is None or not marker.startswith(MARKER_TEXT):
@@ -78,6 +78,8 @@ async def run_cycle(hub, dav, store: StateStore, cfg: Config, now: datetime,
         try:
             await _upload_one(clip, hub, dav, store, cfg, hub_info, remux_fn, tz)
             result.uploaded += 1
+            if on_uploaded is not None:
+                on_uploaded(clip)
             consecutive_failures = 0
         except ClipFailed as exc:
             result.failed += 1

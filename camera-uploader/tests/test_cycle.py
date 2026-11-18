@@ -266,3 +266,10 @@ async def test_webdav_4xx_on_one_clip_does_not_block_queue(cfg, store):
     result = await run(FakeHub([a, b]), dav, store, cfg)
     assert store.status(a.key) == "new" and store.status(b.key) == "uploaded"
     assert result.failed == 1 and result.uploaded == 1
+
+
+async def test_on_uploaded_called_per_clip(cfg, store):
+    seen = []
+    await run_cycle(FakeHub([clip(10, name="Garage", cid="u0", ch=0), clip(5)]), FakeDav(), store, cfg, NOW,
+                    remux_fn=copy_remux, tz=TZ, on_uploaded=seen.append)
+    assert len(seen) == 2
