@@ -37,6 +37,10 @@ services:
     volumes:
       - uploads:/app/uploads
       - webdav_data:/app/webdav
+      # Camera clips (WebDAV user "cameras") live on the dedicated 15 GB
+      # Hetzner volume, never on the root disk. deploy.sh refuses to deploy
+      # if the volume or its marker file is missing.
+      - /mnt/HC_Volume_107526857/cameras:/app/webdav/cameras
       - gallery_data:/app/gallery
     depends_on:
       postgres:

@@ -91,6 +91,17 @@ if [ "$MODE" = "full" ]; then
     done
 fi
 
+echo ">>> checking camera clip volume"
+# The app bind-mounts /mnt/HC_Volume_107526857/cameras. The volume is mounted
+# with `nofail`, so if Hetzner fails to attach it the path would silently be an
+# empty directory on the root disk and clips would fill it. Refuse instead.
+CAMERA_VOLUME=/mnt/HC_Volume_107526857
+if ! mountpoint -q "$CAMERA_VOLUME" || [ ! -f "$CAMERA_VOLUME/cameras/volume-marker.txt" ]; then
+    echo "!!! $CAMERA_VOLUME is not mounted or $CAMERA_VOLUME/cameras/volume-marker.txt is missing." >&2
+    echo "!!! Refusing to deploy: camera clips would land on the root disk." >&2
+    exit 1
+fi
+
 echo ">>> pulling base images (caddy, postgres)"
 docker compose pull caddy postgres
 
