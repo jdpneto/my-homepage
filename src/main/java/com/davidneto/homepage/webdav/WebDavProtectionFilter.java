@@ -71,9 +71,16 @@ public class WebDavProtectionFilter extends OncePerRequestFilter {
                     forbid(response, method, request.getRequestURI(), null, "unreadable credentials");
                     return;
                 }
-                boolean allowedToTry = limiter.check(request.getRemoteAddr(), creds[0]).kind()
-                        == LoginRateLimiter.DecisionKind.ALLOW;
-                if (allowedToTry && factory.isProtected(creds[0]) && passwordMatches(creds[0], creds[1])) {
+                LoginRateLimiter.Decision decision = limiter.check(request.getRemoteAddr(), creds[0]);
+                if (decision.kind() != LoginRateLimiter.DecisionKind.ALLOW) {
+                    // Answer like Milton's rate-limited 401 ourselves: never hand a blocked destructive
+                    // request on (the lockout could expire between this check and Milton's).
+                    response.setStatus(HttpServletResponse.SC_UNAUTHORIZED);
+                    response.setHeader("WWW-Authenticate", "Basic realm=\"webdav\"");
+                    response.setHeader("Retry-After", Long.toString(decision.retryAfterSeconds()));
+                    return;
+                }
+                if (factory.isProtected(creds[0]) && passwordMatches(creds[0], creds[1])) {
                     forbid(response, method, request.getRequestURI(), creds[0],
                             "protected folder: deleting, moving and copying are disabled");
                     return;

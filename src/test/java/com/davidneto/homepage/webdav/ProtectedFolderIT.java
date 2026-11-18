@@ -234,6 +234,8 @@ class ProtectedFolderIT {
         // Correct password while locked out: must look exactly like any other refused login.
         HttpResponse<String> r = dav("DELETE", "Garage/2026-11-18/21-45-49.mp4", "cameras", "cameras-password-1", null);
         assertThat(r.statusCode()).isEqualTo(401);
+        assertThat(r.headers().firstValue("WWW-Authenticate")).isPresent();
+        assertThat(r.headers().firstValue("Retry-After")).isPresent();
         assertThat(clip).exists();
     }
 }
