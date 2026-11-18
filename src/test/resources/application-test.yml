@@ -36,3 +36,7 @@ app:
     user-lockout-long-seconds: 1800
     max-entries: 10000
     sweep-interval-seconds: 600
+  cameras:
+    root-dir: ./build/test-cameras
+    thumbs-dir: ./build/test-camera-thumbs
+    ntfy-topic: ""

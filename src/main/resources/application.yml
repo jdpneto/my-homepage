@@ -43,3 +43,8 @@ app:
     user-lockout-long-seconds: 1800
     max-entries: 10000
     sweep-interval-seconds: 600
+  cameras:
+    root-dir: ${CAMERA_ROOT_DIR:./cameras}
+    thumbs-dir: ${CAMERA_THUMBS_DIR:./camera-thumbs}
+    ntfy-url: ${CAMERA_NTFY_URL:https://ntfy.sh}
+    ntfy-topic: ${CAMERA_NTFY_TOPIC:}

@@ -34,6 +34,10 @@ services:
       - MAE_TITLE=${MAE_TITLE}
       - WEBDAV_DROP_USERNAME=${WEBDAV_DROP_USERNAME}
       - WEBDAV_DROP_PASSWORD=${WEBDAV_DROP_PASSWORD}
+      - CAMERA_ROOT_DIR=/app/webdav/cameras
+      - CAMERA_THUMBS_DIR=/app/camera-thumbs
+      - CAMERA_NTFY_URL=${CAMERA_NTFY_URL:-https://ntfy.sh}
+      - CAMERA_NTFY_TOPIC=${CAMERA_NTFY_TOPIC:-}
     volumes:
       - uploads:/app/uploads
       - webdav_data:/app/webdav
@@ -42,6 +46,7 @@ services:
       # if the volume or its marker file is missing.
       - /mnt/HC_Volume_107526857/cameras:/app/webdav/cameras
       - gallery_data:/app/gallery
+      - camera_thumbs:/app/camera-thumbs
     depends_on:
       postgres:
         condition: service_healthy
@@ -68,6 +73,7 @@ volumes:
   caddy_config:
   webdav_data:
   gallery_data:
+  camera_thumbs:
 
 networks:
   web:
