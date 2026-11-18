@@ -14,6 +14,8 @@ import org.springframework.web.filter.OncePerRequestFilter;
 
 import java.io.IOException;
 import java.net.URI;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.util.Locale;
 import java.util.Set;
 
@@ -30,7 +32,8 @@ import java.util.Set;
  *   <li>Fails closed: a destructive request with an Authorization header this filter cannot
  *       read is refused, so a lenient parser further down cannot be used to slip past.</li>
  * </ul>
- * Adding files (PUT, MKCOL) stays allowed: the camera uploader needs it.
+ * Adding files (PUT, MKCOL) stays allowed: the camera uploader needs it — but a PUT may not
+ * write keep markers, overwrite a kept clip, or replace an existing file with an empty one.
  */
 @Component
 public class WebDavProtectionFilter extends OncePerRequestFilter {
@@ -63,7 +66,7 @@ public class WebDavProtectionFilter extends OncePerRequestFilter {
             return;
         }
 
-        if (DESTRUCTIVE.contains(method)) {
+        if (DESTRUCTIVE.contains(method) || "PUT".equals(method)) {
             String header = request.getHeader("Authorization");
             if (header != null) {
                 String[] creds = BasicAuthUsername.parseCredentials(header);
@@ -81,13 +84,35 @@ public class WebDavProtectionFilter extends OncePerRequestFilter {
                     return;
                 }
                 if (factory.isProtected(creds[0]) && passwordMatches(creds[0], creds[1])) {
-                    forbid(response, method, request.getRequestURI(), creds[0],
-                            "protected folder: deleting, moving and copying are disabled");
-                    return;
+                    String why = "PUT".equals(method)
+                            ? refusedPut(creds[0], decodedPath(request), request.getContentLengthLong())
+                            : "protected folder: deleting, moving and copying are disabled";
+                    if (why != null) {
+                        forbid(response, method, request.getRequestURI(), creds[0], why);
+                        return;
+                    }
                 }
             }
         }
         chain.doFilter(request, response);
+    }
+
+    /**
+     * In a protected folder a PUT may add files and re-upload unkept clips (the uploader's retry),
+     * but never write keep markers, overwrite a kept clip, or empty an existing file.
+     */
+    private String refusedPut(String username, String servletPath, long contentLength) {
+        String rel = servletPath == null ? "" : servletPath.replaceFirst("^/webdav/?", "");
+        if (rel.toLowerCase(Locale.ROOT).endsWith(".keep")) return "keep markers cannot be written over WebDAV";
+        Path root = factory.userRoot(username);
+        Path target = root.resolve(rel).normalize();
+        if (!target.startsWith(root) || !Files.exists(target)) return null;
+        String name = target.getFileName().toString();
+        int dot = name.lastIndexOf('.');
+        Path keep = target.resolveSibling((dot > 0 ? name.substring(0, dot) : name) + ".keep");
+        if (Files.exists(keep)) return "this clip is kept: it cannot be overwritten";
+        if (contentLength == 0) return "an existing file cannot be replaced by an empty one";
+        return null;
     }
 
     private boolean passwordMatches(String username, String password) {

@@ -238,4 +238,36 @@ class ProtectedFolderIT {
         assertThat(r.headers().firstValue("Retry-After")).isPresent();
         assertThat(clip).exists();
     }
+
+    @Test
+    void emptyPutOverExistingClipIsRefused() throws Exception {
+        assertThat(dav("PUT", "Garage/2026-11-18/21-45-49.mp4", "cameras", "cameras-password-1", "")
+                .statusCode()).isEqualTo(403);
+        assertThat(Files.readAllBytes(clip)).containsExactly(1, 2, 3);
+    }
+
+    @Test
+    void putOverAKeptClipIsRefused() throws Exception {
+        Files.writeString(camerasRoot.resolve("Garage/2026-11-18/21-45-49.json"), "{\"camera_name\":\"Garage\"}");
+        Files.createFile(camerasRoot.resolve("Garage/2026-11-18/21-45-49.keep"));
+        assertThat(dav("PUT", "Garage/2026-11-18/21-45-49.mp4", "cameras", "cameras-password-1", "junk")
+                .statusCode()).isEqualTo(403);
+        assertThat(dav("PUT", "Garage/2026-11-18/21-45-49.json", "cameras", "cameras-password-1", "{}")
+                .statusCode()).isEqualTo(403);
+        assertThat(Files.readAllBytes(clip)).containsExactly(1, 2, 3);
+    }
+
+    @Test
+    void keepFilesCannotBeWrittenOverWebdav() throws Exception {
+        assertThat(dav("PUT", "Garage/2026-11-18/21-45-49.keep", "cameras", "cameras-password-1", "x")
+                .statusCode()).isEqualTo(403);
+        assertThat(camerasRoot.resolve("Garage/2026-11-18/21-45-49.keep")).doesNotExist();
+    }
+
+    @Test
+    void uploaderRetryOverAnUnkeptClipStillWorks() throws Exception {
+        HttpResponse<String> r = dav("PUT", "Garage/2026-11-18/21-45-49.mp4", "cameras", "cameras-password-1", "new-bytes");
+        assertThat(r.statusCode()).isIn(201, 204);
+        assertThat(Files.readString(clip)).isEqualTo("new-bytes");
+    }
 }

@@ -120,6 +120,11 @@ public class PerUserFileResourceFactory implements ResourceFactory {
     /** Marker file whose presence makes a user's folder the protected camera volume. */
     public static final String VOLUME_MARKER = "volume-marker.txt";
 
+    /** The user's root folder (not created). */
+    public Path userRoot(String username) {
+        return new File(rootDir, username).toPath().toAbsolutePath().normalize();
+    }
+
     /**
      * True when the user's folder is the camera volume (contains {@value #VOLUME_MARKER}).
      * Such folders must never be wiped, and WebDAV DELETE/MOVE are refused in them.
@@ -179,7 +184,9 @@ public class PerUserFileResourceFactory implements ResourceFactory {
         }
         // contextPath without leading slash: Milton builds regex as "/" + contextPath,
         // so "webdav" produces the correct pattern "/webdav".
-        return new FileSystemResourceFactory(userRoot, new NullSecurityManager(), "webdav");
+        FileSystemResourceFactory factory = new FileSystemResourceFactory(userRoot, new NullSecurityManager(), "webdav");
+        factory.setContentService(new AtomicFileContentService());
+        return factory;
     }
 
     /**
