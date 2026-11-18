@@ -11,6 +11,12 @@ public final class BasicAuthUsername {
 
     /** The username, or {@code null} if the header is missing, not Basic, or malformed. */
     public static String parse(String header) {
+        String[] creds = parseCredentials(header);
+        return creds == null ? null : creds[0];
+    }
+
+    /** {username, password}, or {@code null} if the header is missing, not Basic, or malformed. */
+    public static String[] parseCredentials(String header) {
         if (header == null) return null;
         String prefix = "Basic ";
         if (!header.regionMatches(true, 0, prefix, 0, prefix.length())) return null;
@@ -25,6 +31,6 @@ public final class BasicAuthUsername {
         String creds = new String(decoded, StandardCharsets.UTF_8);
         int colon = creds.indexOf(':');
         if (colon <= 0) return null;
-        return creds.substring(0, colon);
+        return new String[]{creds.substring(0, colon), creds.substring(colon + 1)};
     }
 }

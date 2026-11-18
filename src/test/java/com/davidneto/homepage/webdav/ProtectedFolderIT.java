@@ -73,6 +73,7 @@ class ProtectedFolderIT {
     void cleanUp() throws Exception {
         // Other ITs delete every user in their setup; unprotect first so they still can.
         Files.deleteIfExists(Path.of(webdavRoot, "cameras", "volume-marker.txt"));
+        Files.deleteIfExists(Path.of(webdavRoot, "plain", "volume-marker.txt"));
         users.list().stream().filter(u -> u.getUsername().equals("cameras") || u.getUsername().equals("plain"))
                 .forEach(u -> users.delete(u.getId()));
         limiter.resetAllForTesting();
@@ -177,5 +178,44 @@ class ProtectedFolderIT {
         assertThat(html).doesNotContain("/admin/webdav-users/" + camerasId + "/delete");
         assertThat(html).doesNotContain("/admin/webdav-users/" + camerasId + "/clear-data");
         assertThat(html).contains("/admin/webdav-users/" + id("plain") + "/delete");
+    }
+
+    // --- security review follow-ups ------------------------------------------------
+
+    @Test
+    void copyOverwriteForbiddenForProtected() throws Exception {
+        Files.write(camerasRoot.resolve("Garage/2026-11-18/other.mp4"), new byte[]{9});
+        assertThat(dav("COPY", "Garage/2026-11-18/other.mp4", "cameras", "cameras-password-1", null,
+                "Destination", "http://localhost:" + port + "/webdav/Garage/2026-11-18/21-45-49.mp4",
+                "Overwrite", "T").statusCode()).isEqualTo(403);
+        assertThat(Files.readAllBytes(clip)).containsExactly(1, 2, 3);
+    }
+
+    @Test
+    void unparseableAuthorizationOnDeleteFailsClosed() throws Exception {
+        HttpResponse<String> r = HttpClient.newHttpClient().send(HttpRequest.newBuilder()
+                .uri(URI.create("http://localhost:" + port + "/webdav/Garage/2026-11-18/21-45-49.mp4"))
+                .method("DELETE", HttpRequest.BodyPublishers.noBody())
+                .header("Authorization", "Basic Y2Ft ZXJhczpjYW1lcmFzLXBhc3N3b3JkLTE=") // space inside
+                .build(), HttpResponse.BodyHandlers.ofString());
+        assertThat(r.statusCode()).isEqualTo(403);
+        assertThat(clip).exists();
+    }
+
+    @Test
+    void wrongPasswordDeleteGets401NotProtectedHint() throws Exception {
+        assertThat(dav("DELETE", "Garage/2026-11-18/21-45-49.mp4", "cameras", "wrong-password", null)
+                .statusCode()).isEqualTo(401);
+        assertThat(clip).exists();
+    }
+
+    @Test
+    void nobodyCanWriteAVolumeMarker() throws Exception {
+        assertThat(dav("PUT", "volume-marker.txt", "plain", "plain-password-1", "fake").statusCode()).isEqualTo(403);
+        assertThat(plainRoot.resolve("volume-marker.txt")).doesNotExist();
+        assertThat(dav("MOVE", "a.txt", "plain", "plain-password-1", null,
+                "Destination", "http://localhost:" + port + "/webdav/volume-marker.txt").statusCode()).isEqualTo(403);
+        assertThat(dav("PUT", "volume-marker.txt", "cameras", "cameras-password-1", "x").statusCode()).isEqualTo(403);
+        assertThat(Files.readString(camerasRoot.resolve("volume-marker.txt"))).startsWith("camera clips live");
     }
 }

@@ -1,48 +1,112 @@
 package com.davidneto.homepage.webdav;
 
+import com.davidneto.homepage.repository.WebDavUserRepository;
 import jakarta.servlet.FilterChain;
 import jakarta.servlet.ServletException;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Component;
 import org.springframework.web.filter.OncePerRequestFilter;
 
 import java.io.IOException;
+import java.net.URI;
+import java.util.Locale;
+import java.util.Set;
 
 /**
- * Refuses WebDAV DELETE and MOVE in protected folders (the camera volume).
+ * Guards the camera volume over WebDAV. Runs before Milton.
  *
- * Runs before Milton and before authentication: it only ever denies, so not
- * checking the password here is safe. Adding files (PUT, MKCOL) stays allowed
- * because the camera uploader needs it.
+ * <ul>
+ *   <li>Nobody may write, move or copy onto {@value PerUserFileResourceFactory#VOLUME_MARKER}
+ *       (it is what makes a folder protected, so users must not be able to create it).</li>
+ *   <li>In a protected folder, DELETE, MOVE and COPY are refused once the password has been
+ *       verified. A wrong password is passed on to Milton for its normal 401, so this filter
+ *       never reveals which accounts are protected.</li>
+ *   <li>Fails closed: a destructive request with an Authorization header this filter cannot
+ *       read is refused, so a lenient parser further down cannot be used to slip past.</li>
+ * </ul>
+ * Adding files (PUT, MKCOL) stays allowed: the camera uploader needs it.
  */
 @Component
 public class WebDavProtectionFilter extends OncePerRequestFilter {
 
     private static final Logger log = LoggerFactory.getLogger(WebDavProtectionFilter.class);
+    private static final Set<String> DESTRUCTIVE = Set.of("DELETE", "MOVE", "COPY");
+    private static final Set<String> READ_ONLY = Set.of("GET", "HEAD", "OPTIONS", "PROPFIND");
 
     private final PerUserFileResourceFactory factory;
+    private final WebDavUserRepository users;
+    private final PasswordEncoder encoder;
 
-    public WebDavProtectionFilter(PerUserFileResourceFactory factory) {
+    public WebDavProtectionFilter(PerUserFileResourceFactory factory, WebDavUserRepository users,
+                                  PasswordEncoder encoder) {
         this.factory = factory;
+        this.users = users;
+        this.encoder = encoder;
     }
 
     @Override
     protected void doFilterInternal(HttpServletRequest request, HttpServletResponse response, FilterChain chain)
             throws ServletException, IOException {
-        String method = request.getMethod();
-        if ("DELETE".equalsIgnoreCase(method) || "MOVE".equalsIgnoreCase(method)) {
-            String username = BasicAuthUsername.parse(request.getHeader("Authorization"));
-            if (username != null && factory.isProtected(username)) {
-                log.warn("refused WebDAV {} {} for protected user={}", method, request.getRequestURI(), username);
-                response.setStatus(HttpServletResponse.SC_FORBIDDEN);
-                response.setContentType("text/plain; charset=utf-8");
-                response.getWriter().write("protected folder: deleting and moving are disabled");
-                return;
+        String method = request.getMethod().toUpperCase(Locale.ROOT);
+
+        if (!READ_ONLY.contains(method)
+                && (isMarker(request.getRequestURI()) || isMarker(destinationPath(request)))) {
+            forbid(response, method, request.getRequestURI(), null, "the volume marker cannot be written");
+            return;
+        }
+
+        if (DESTRUCTIVE.contains(method)) {
+            String header = request.getHeader("Authorization");
+            if (header != null) {
+                String[] creds = BasicAuthUsername.parseCredentials(header);
+                if (creds == null) {
+                    forbid(response, method, request.getRequestURI(), null, "unreadable credentials");
+                    return;
+                }
+                if (factory.isProtected(creds[0]) && passwordMatches(creds[0], creds[1])) {
+                    forbid(response, method, request.getRequestURI(), creds[0],
+                            "protected folder: deleting, moving and copying are disabled");
+                    return;
+                }
             }
         }
         chain.doFilter(request, response);
+    }
+
+    private boolean passwordMatches(String username, String password) {
+        // Deliberately not the rate-limited SecurityManager: Milton authenticates (and counts) next.
+        return users.findByUsername(username)
+                .map(u -> encoder.matches(password, u.getPasswordHash()))
+                .orElse(false);
+    }
+
+    private static boolean isMarker(String path) {
+        if (path == null) return false;
+        String p = path.endsWith("/") ? path.substring(0, path.length() - 1) : path;
+        String last = p.substring(p.lastIndexOf('/') + 1);
+        return last.equalsIgnoreCase(PerUserFileResourceFactory.VOLUME_MARKER);
+    }
+
+    private static String destinationPath(HttpServletRequest request) {
+        String dest = request.getHeader("Destination");
+        if (dest == null) return null;
+        try {
+            String path = URI.create(dest).getPath();
+            return path != null ? path : dest;
+        } catch (IllegalArgumentException e) {
+            return dest;
+        }
+    }
+
+    private static void forbid(HttpServletResponse response, String method, String uri, String user, String why)
+            throws IOException {
+        log.warn("refused WebDAV {} {} user={}: {}", method, uri, user, why);
+        response.setStatus(HttpServletResponse.SC_FORBIDDEN);
+        response.setContentType("text/plain; charset=utf-8");
+        response.getWriter().write(why);
     }
 }
