@@ -10,6 +10,8 @@ import java.util.Optional;
 public interface CameraClipRepository extends JpaRepository<CameraClip, Long>, JpaSpecificationExecutor<CameraClip> {
     Optional<CameraClip> findByStem(String stem);
 
+    List<CameraClip> findByStartAtBefore(java.time.Instant cutoff);
+
     @Query("select distinct c.cameraName from CameraClip c order by c.cameraName")
     List<String> findCameraNames();
 
