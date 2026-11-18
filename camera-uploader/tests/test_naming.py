@@ -39,3 +39,9 @@ def test_remote_stem_suffix():
 
 def test_remote_stem_sanitizes_camera():
     assert remote_stem(clip("Garagem/Porta")).startswith("Garagem_Porta/")
+
+
+def test_sanitize_replaces_percent_and_semicolon():
+    # Spring's StrictHttpFirewall rejects encoded % and ; with HTTP 400.
+    assert sanitize_camera("Sala 100%") == "Sala 100_"
+    assert sanitize_camera("Frente;Rua") == "Frente_Rua"

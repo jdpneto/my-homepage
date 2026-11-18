@@ -28,6 +28,7 @@ class Config:
     settle_seconds: int = 20
     backfill_days: int = 30
     max_attempts: int = 5
+    give_up_hours: float = 6
     ffmpeg: str = "/opt/homebrew/bin/ffmpeg"
 
     def __repr__(self) -> str:
@@ -35,7 +36,7 @@ class Config:
             f"Config(hub={self.hub_user}@{self.hub_host} password=***, "
             f"webdav={self.webdav_user}@{self.webdav_url} password=***, "
             f"poll={self.poll_seconds}s settle={self.settle_seconds}s "
-            f"backfill={self.backfill_days}d max_attempts={self.max_attempts}, "
+            f"backfill={self.backfill_days}d max_attempts={self.max_attempts} give_up={self.give_up_hours}h, "
             f"state={self.state_path} tmp={self.tmp_dir} log={self.log_path} ffmpeg={self.ffmpeg})"
         )
 
@@ -89,5 +90,6 @@ def load_config(path: Path) -> Config:
         settle_seconds=int(uploader.get("settle_seconds", 20)),
         backfill_days=int(uploader.get("backfill_days", 30)),
         max_attempts=int(uploader.get("max_attempts", 5)),
+        give_up_hours=float(uploader.get("give_up_hours", 6)),
         ffmpeg=str(paths.get("ffmpeg", "/opt/homebrew/bin/ffmpeg")),
     )

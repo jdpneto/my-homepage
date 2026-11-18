@@ -7,10 +7,12 @@ from zoneinfo import ZoneInfo
 import pytest
 
 from camera_uploader.config import Config
-from camera_uploader.cycle import CycleResult, run_cycle
+from dataclasses import replace
+
+from camera_uploader.cycle import CycleAborted, CycleResult, run_cycle
 from camera_uploader.hub import HubError
 from camera_uploader.model import Clip
-from camera_uploader.remux import RemuxError
+from camera_uploader.remux import RemuxError, RemuxUnavailable
 from camera_uploader.state import StateStore
 from camera_uploader.webdav import QuotaFullError, TransientError, WebDavError
 
@@ -173,6 +175,7 @@ async def test_marker_with_wrong_content_refuses(cfg, store):
 
 
 async def test_bad_clip_fails_after_5_attempts_and_releases_watermark(cfg, store):
+    cfg = replace(cfg, give_up_hours=0)
     bad, good = clip(10, name="Garage", cid="uid0", ch=0), clip(5)
     for i in range(5):
         result = await run(FakeHub([bad]), FakeDav(), store, cfg, now=NOW + timedelta(seconds=30 * i),
@@ -222,3 +225,44 @@ async def test_first_run_window_is_backfill_then_follows_watermark(cfg, store):
     later = NOW + timedelta(minutes=1)
     await run(hub, FakeDav(), store, cfg, now=later)
     assert hub.windows[1][0] == NOW - timedelta(seconds=20) - timedelta(minutes=10)
+
+
+
+# --- final-review fixes ---------------------------------------------------------
+
+def missing_ffmpeg(src, dst, ffmpeg):
+    raise RemuxUnavailable("ffmpeg not found")
+
+
+async def test_two_consecutive_failures_abort_cycle(cfg, store):
+    a, b, c = clip(12, ch=0, cid="u0", name="Garage"), clip(10), clip(5, ch=0, cid="u0", name="Garage")
+    hub = FakeHub([a, b, c], fail_download={a.key, b.key})
+    with pytest.raises(CycleAborted):
+        await run(hub, FakeDav(), store, cfg)
+    assert hub.downloads == [a.key, b.key]  # c never tried this cycle
+    assert store.status(c.key) == "new"
+
+
+async def test_missing_ffmpeg_aborts_without_charging_clips(cfg, store):
+    cfg = replace(cfg, give_up_hours=0)
+    c = clip(5)
+    for i in range(7):
+        with pytest.raises(CycleAborted):
+            await run(FakeHub([c]), FakeDav(), store, cfg, now=NOW + timedelta(seconds=30 * i),
+                      remux_fn=missing_ffmpeg)
+    assert store.status(c.key) == "new"
+
+
+async def test_clip_not_given_up_within_give_up_hours(cfg, store):
+    bad = clip(10)
+    for i in range(8):
+        await run(FakeHub([bad]), FakeDav(), store, cfg, now=NOW + timedelta(seconds=30 * i), remux_fn=broken_remux)
+    assert store.status(bad.key) == "new"  # cfg.give_up_hours defaults to 6
+
+
+async def test_webdav_4xx_on_one_clip_does_not_block_queue(cfg, store):
+    a, b = clip(10, name="Garage", cid="uid0", ch=0), clip(5)
+    dav = FakeDav(fail={("PUT", f"{a.start:%H-%M-%S}.mp4"): WebDavError("HTTP 400")})
+    result = await run(FakeHub([a, b]), dav, store, cfg)
+    assert store.status(a.key) == "new" and store.status(b.key) == "uploaded"
+    assert result.failed == 1 and result.uploaded == 1

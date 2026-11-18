@@ -12,13 +12,17 @@ class RemuxError(Exception):
     """ffmpeg could not remux the clip."""
 
 
+class RemuxUnavailable(RemuxError):
+    """ffmpeg itself is missing or cannot run - not the clip's fault."""
+
+
 def remux(src: Path, dst: Path, ffmpeg: str) -> None:
     cmd = [ffmpeg, "-nostdin", "-v", "error", "-y", "-i", str(src), "-c", "copy",
            "-movflags", "+faststart", str(dst)]
     try:
         result = subprocess.run(cmd, capture_output=True, text=True, timeout=TIMEOUT_SECONDS)
-    except FileNotFoundError:
-        raise RemuxError(f"ffmpeg not found at {ffmpeg}") from None
+    except OSError as exc:  # missing, not executable, broken binary
+        raise RemuxUnavailable(f"cannot run ffmpeg at {ffmpeg}: {exc}") from None
     except subprocess.TimeoutExpired:
         raise RemuxError(f"ffmpeg timed out after {TIMEOUT_SECONDS}s on {src.name}") from None
     if result.returncode != 0:

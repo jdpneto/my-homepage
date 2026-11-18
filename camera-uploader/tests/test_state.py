@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import datetime, timedelta
 
 from camera_uploader.state import StateStore
 
@@ -15,7 +15,8 @@ def test_mark_uploaded_persists_across_instances(tmp_path):
 
 def test_record_failure_turns_failed_exactly_on_max_attempts(tmp_path):
     store = StateStore(tmp_path / "s.db")
-    results = [store.record_failure("k1", f"boom {i}", max_attempts=5) for i in range(5)]
+    results = [store.record_failure("k1", f"boom {i}", max_attempts=5, give_up_after=timedelta(0))
+               for i in range(5)]
     assert results == [False, False, False, False, True]
     assert store.status("k1") == "failed"
 
@@ -51,3 +52,15 @@ def test_watermark_roundtrip(tmp_path):
 def test_creates_parent_directory(tmp_path):
     StateStore(tmp_path / "deep" / "dir" / "s.db").mark_uploaded("k", "s")
     assert (tmp_path / "deep" / "dir" / "s.db").exists()
+
+
+def test_not_given_up_before_give_up_after_has_passed(tmp_path):
+    store = StateStore(tmp_path / "s.db")
+    t0 = datetime(2026, 11, 18, 21, 0, 0)
+    for i in range(10):  # many quick failures, e.g. during a hub outage
+        assert store.record_failure("k1", "boom", max_attempts=5, give_up_after=timedelta(hours=6),
+                                    now=t0 + timedelta(minutes=i)) is False
+    assert store.status("k1") == "new"
+    assert store.record_failure("k1", "boom", max_attempts=5, give_up_after=timedelta(hours=6),
+                                now=t0 + timedelta(hours=6, minutes=1)) is True
+    assert store.status("k1") == "failed"

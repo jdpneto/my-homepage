@@ -16,7 +16,8 @@ password = "CHANGE_ME"
 poll_seconds = 30      # how often to ask the hub for new clips
 settle_seconds = 20    # only take clips that ended at least this long ago
 backfill_days = 30     # first run, and the longest catch-up after an outage
-max_attempts = 5       # give up on a clip after this many failed attempts
+max_attempts = 5       # give up on a clip after this many failed attempts...
+give_up_hours = 6      # ...and only once its first failure is at least this old
 
 [paths]
 state = "/usr/local/var/camera-uploader/state.sqlite3"

@@ -13,10 +13,10 @@ from . import __version__
 from .config import Config
 from .hub import HubError
 from .naming import remote_stem
-from .remux import RemuxError, remux
+from .remux import RemuxError, RemuxUnavailable, remux
 from .sidecar import build_sidecar
 from .state import StateStore
-from .webdav import WebDavError
+from .webdav import AuthError, QuotaFullError, TransientError, WebDavError
 from .window import compute_window, next_watermark
 
 log = logging.getLogger(__name__)
@@ -41,6 +41,15 @@ class ClipFailed(Exception):
     """This clip could not be processed; count an attempt and move on."""
 
 
+class CycleAborted(HubError):
+    """Failures that are not the clips' fault (ffmpeg missing, every download failing).
+
+    A HubError so the main loop backs off and reconnects to the hub.
+    """
+
+
+MAX_CONSECUTIVE_FAILURES = 2
+
 async def run_cycle(hub, dav, store: StateStore, cfg: Config, now: datetime,
                     remux_fn=remux, tz: tzinfo | None = None) -> CycleResult:
     # Refuse before touching anything if the 15 GB volume isn't behind the share.
@@ -56,6 +65,7 @@ async def run_cycle(hub, dav, store: StateStore, cfg: Config, now: datetime,
 
     result = CycleResult()
     still_todo: list[datetime] = []
+    consecutive_failures = 0
     for clip in sorted(clips, key=lambda c: (c.start, c.channel, c.end)):
         status = store.status(clip.key)
         if status != "new":
@@ -68,9 +78,16 @@ async def run_cycle(hub, dav, store: StateStore, cfg: Config, now: datetime,
         try:
             await _upload_one(clip, hub, dav, store, cfg, hub_info, remux_fn, tz)
             result.uploaded += 1
+            consecutive_failures = 0
         except ClipFailed as exc:
             result.failed += 1
-            if store.record_failure(clip.key, str(exc), cfg.max_attempts):
+            consecutive_failures += 1
+            gave_up = store.record_failure(clip.key, str(exc), cfg.max_attempts,
+                                           timedelta(hours=cfg.give_up_hours), now)
+            if consecutive_failures >= MAX_CONSECUTIVE_FAILURES:
+                raise CycleAborted(f"{consecutive_failures} clips in a row failed (last: {exc}) - "
+                                   "backing off and reconnecting") from exc
+            if gave_up:
                 log.error("giving up on %s %s after %d attempts: %s",
                           clip.camera_name, clip.start, cfg.max_attempts, exc)
             else:
@@ -96,6 +113,8 @@ async def _upload_one(clip, hub, dav, store: StateStore, cfg: Config, hub_info: 
             raise ClipFailed("download returned 0 bytes")
         try:
             remux_fn(raw, out, cfg.ffmpeg)
+        except RemuxUnavailable as exc:
+            raise CycleAborted(f"remux: {exc}") from exc  # not the clip's fault: don't charge it
         except RemuxError as exc:
             raise ClipFailed(f"remux: {exc}") from exc
 
@@ -105,11 +124,17 @@ async def _upload_one(clip, hub, dav, store: StateStore, cfg: Config, hub_info: 
         stem = remote_stem(clip, suffix)
         sidecar = build_sidecar(clip, hub_info, __version__, tz)
 
-        # WebDAV errors (auth, quota, network) propagate: they stop the cycle.
-        await dav.ensure_dirs(stem)
-        await dav.put_file(f"{stem}.mp4", out, "video/mp4")
-        await dav.put_bytes(f"{stem}.json", json.dumps(sidecar, ensure_ascii=False, indent=2).encode(),
-                            "application/json")
+        # Auth, quota and network errors propagate: they stop the cycle. Any other
+        # WebDAV error (e.g. a 4xx on this clip's path) is this clip's problem.
+        try:
+            await dav.ensure_dirs(stem)
+            await dav.put_file(f"{stem}.mp4", out, "video/mp4")
+            await dav.put_bytes(f"{stem}.json", json.dumps(sidecar, ensure_ascii=False, indent=2).encode(),
+                                "application/json")
+        except (AuthError, QuotaFullError, TransientError):
+            raise
+        except WebDavError as exc:
+            raise ClipFailed(f"upload: {exc}") from exc
         store.mark_uploaded(clip.key, stem)
         log.info("uploaded %s %s -> %s.mp4 (%.1f MB, %.1fs)", clip.camera_name, clip.start, stem,
                  out.stat().st_size / 1e6, time.monotonic() - started)

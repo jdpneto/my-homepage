@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import sqlite3
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Literal
 
@@ -16,6 +16,7 @@ CREATE TABLE IF NOT EXISTS clips (
     remote_stem TEXT,
     attempts    INTEGER NOT NULL DEFAULT 0,
     last_error  TEXT,
+    first_failed_at TEXT,
     updated_at  TEXT NOT NULL DEFAULT (datetime('now'))
 );
 CREATE INDEX IF NOT EXISTS clips_remote_stem ON clips (remote_stem);
@@ -50,17 +51,26 @@ class StateStore:
                 "last_error=NULL, updated_at=datetime('now')",
                 (key, remote_stem))
 
-    def record_failure(self, key: str, error: str, max_attempts: int) -> bool:
-        """Count a failed attempt; True when this attempt made the clip `failed`."""
+    def record_failure(self, key: str, error: str, max_attempts: int,
+                       give_up_after: timedelta = timedelta(hours=6), now: datetime | None = None) -> bool:
+        """Count a failed attempt; True when this attempt made the clip `failed`.
+
+        A clip is given up only after `max_attempts` failures AND once its first
+        failure is at least `give_up_after` old, so a burst of failures during a
+        short outage never abandons clips.
+        """
+        now = now or datetime.now()
         with self._txn():
             self._db.execute(
-                "INSERT INTO clips (key, status, attempts, last_error) VALUES (?, 'new', 1, ?) "
+                "INSERT INTO clips (key, status, attempts, last_error, first_failed_at) VALUES (?, 'new', 1, ?, ?) "
                 "ON CONFLICT(key) DO UPDATE SET attempts=attempts+1, last_error=excluded.last_error, "
+                "first_failed_at=COALESCE(first_failed_at, excluded.first_failed_at), "
                 "updated_at=datetime('now') WHERE status = 'new'",
-                (key, error[:500]))
-            status, attempts = self._db.execute(
-                "SELECT status, attempts FROM clips WHERE key = ?", (key,)).fetchone()
-            if status == "new" and attempts >= max_attempts:
+                (key, error[:500], now.isoformat()))
+            status, attempts, first = self._db.execute(
+                "SELECT status, attempts, first_failed_at FROM clips WHERE key = ?", (key,)).fetchone()
+            old_enough = first is not None and now - datetime.fromisoformat(first) >= give_up_after
+            if status == "new" and attempts >= max_attempts and old_enough:
                 self._db.execute("UPDATE clips SET status='failed' WHERE key = ?", (key,))
                 return True
         return False

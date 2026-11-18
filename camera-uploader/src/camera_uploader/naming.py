@@ -11,9 +11,12 @@ _WS = re.compile(r"\s+")
 
 
 def sanitize_camera(name: str) -> str:
-    """Folder-safe camera name: no path separators or control chars; accents and spaces kept."""
+    """Folder-safe camera name: no path separators, %, ; or control chars; accents and spaces kept.
+
+    % and ; are replaced because the homepage's Spring firewall rejects them (encoded) with HTTP 400.
+    """
     text = _WS.sub(" ", name.strip())
-    text = "".join("_" if ch in "/\\" or unicodedata.category(ch) == "Cc" else ch for ch in text).strip()
+    text = "".join("_" if ch in "/\\%;" or unicodedata.category(ch) == "Cc" else ch for ch in text).strip()
     return "camera" if text in ("", ".", "..") else text
 
 
