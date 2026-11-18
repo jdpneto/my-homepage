@@ -34,6 +34,7 @@ public class ClipIndexer {
     private final CameraClipRepository repo;
     private final Clock clock;
     private Instant lastVolumeWarning = Instant.EPOCH;
+    private final java.util.Set<String> warned = java.util.concurrent.ConcurrentHashMap.newKeySet();
 
     public ClipIndexer(ClipFiles files, ClipThumbnailer thumbnailer, CameraClipRepository repo, Clock clock) {
         this.files = files;
@@ -68,10 +69,16 @@ public class ClipIndexer {
         int added = 0, removed = 0, keptChanged = 0;
 
         for (String stem : onDisk) {
+          try {
             CameraClip row = rows.get(stem);
             if (row == null) {
                 var sidecar = files.readSidecar(stem);
-                if (sidecar.isEmpty()) continue; // not finished uploading yet
+                if (sidecar.isEmpty()) {
+                    // not finished uploading yet - or never will be: say so once it is clearly stuck
+                    boolean stuck = files.arrivedAt(stem).map(t -> Duration.between(t, now).toHours() >= 1).orElse(false);
+                    if (stuck && warned.add(stem)) log.warn("clip {} has no readable .json after 1 h - not indexed", stem);
+                    continue;
+                }
                 repo.save(newRow(stem, sidecar.get(), now));
                 added++;
             } else {
@@ -92,6 +99,10 @@ public class ClipIndexer {
                 }
                 if (dirty) repo.save(row);
             }
+          } catch (RuntimeException e) {
+            // one bad clip must never stop indexing (or the cleanup, which reconciles first)
+            if (warned.add(stem)) log.warn("cannot index clip {}: {}", stem, e.toString());
+          }
         }
 
         for (CameraClip row : rows.values()) {

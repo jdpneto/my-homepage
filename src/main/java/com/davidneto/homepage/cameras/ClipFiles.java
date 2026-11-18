@@ -94,6 +94,15 @@ public class ClipFiles {
         }
     }
 
+    /** When the clip's .mp4 arrived on this server (its modification time), if it exists. */
+    public java.util.Optional<java.time.Instant> arrivedAt(String stem) {
+        try {
+            return java.util.Optional.of(Files.getLastModifiedTime(resolve(stem, ".mp4")).toInstant());
+        } catch (IOException e) {
+            return java.util.Optional.empty();
+        }
+    }
+
     public Path mp4(String stem) {
         return resolve(stem, ".mp4");
     }
@@ -139,8 +148,11 @@ public class ClipFiles {
 
     /** Path for a stem + suffix; refuses anything outside the layout or the root. */
     private Path resolve(String stem, String suffix) {
-        if (stem == null || !STEM.matcher(stem).matches() || stem.contains("..")) {
+        if (stem == null || !STEM.matcher(stem).matches()) {
             throw new IllegalArgumentException("not a clip stem: " + stem);
+        }
+        for (String segment : stem.split("/")) {
+            if (segment.equals(".") || segment.equals("..")) throw new IllegalArgumentException("not a clip stem: " + stem);
         }
         Path root = root().toAbsolutePath().normalize();
         Path p = root.resolve(stem + suffix).normalize();

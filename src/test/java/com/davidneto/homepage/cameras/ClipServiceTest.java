@@ -215,4 +215,13 @@ class ClipServiceTest {
         assertThat(service.get(999_999L)).isEmpty();
         assertThat(Map.of()).isEmpty();
     }
+
+    @Test
+    void deleteChecksKeepOnDiskNotTheCachedFlag() throws Exception {
+        fiveClips();
+        ClipView v = service.list(all(1)).get(0);
+        files.setKept("Garage/2026-11-18/21-49-41", true); // row still says kept=false
+        assertThrows(ClipKeptException.class, () -> service.delete(v.id()));
+        assertThat(root.resolve("Garage/2026-11-18/21-49-41.mp4")).exists();
+    }
 }

@@ -74,6 +74,10 @@ public class RetentionJob {
         Instant cutoff = clock.instant().minus(Duration.ofDays(props.getRetentionDays()));
         int deleted = 0, skippedKept = 0;
         for (CameraClip c : repo.findByStartAtBefore(cutoff)) {
+            // Old by the hub's clock is not enough: a hub that booted with a wrong date stamps new
+            // clips as old. Also require that the file arrived here before the cutoff.
+            boolean arrivedBeforeCutoff = files.arrivedAt(c.getStem()).map(t -> t.isBefore(cutoff)).orElse(false);
+            if (!arrivedBeforeCutoff) continue;
             if (files.isKept(c.getStem())) {
                 skippedKept++;
                 if (!c.isKept()) {
@@ -88,8 +92,20 @@ public class RetentionJob {
             repo.delete(c);
             deleted++;
         }
-        log.info("camera cleanup: {} clips older than {} days deleted, {} kept clips skipped",
-                deleted, props.getRetentionDays(), skippedKept);
-        return new RetentionResult(deleted, skippedKept, true, "ok");
+        // Clips whose .json never arrived are never indexed: remove them by arrival time alone.
+        java.util.Set<String> indexed = new java.util.HashSet<>();
+        repo.findAll().forEach(c -> indexed.add(c.getStem()));
+        int orphans = 0;
+        for (String stem : files.listStems()) {
+            if (indexed.contains(stem) || files.isKept(stem)) continue;
+            if (files.arrivedAt(stem).map(t -> t.isBefore(cutoff)).orElse(false)) {
+                files.deleteClip(stem);
+                thumbnailer.delete(stem);
+                orphans++;
+            }
+        }
+        log.info("camera cleanup: {} clips older than {} days deleted ({} without .json), {} kept clips skipped",
+                deleted + orphans, props.getRetentionDays(), orphans, skippedKept);
+        return new RetentionResult(deleted + orphans, skippedKept, true, "ok");
     }
 }

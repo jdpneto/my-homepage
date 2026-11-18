@@ -119,6 +119,8 @@ class ClipFilesTest {
         assertThrows(IllegalArgumentException.class, () -> files.deleteClip("Garage/../../etc/2026-11-18/21-45-49"));
         assertThrows(IllegalArgumentException.class, () -> files.deleteClip("volume-marker"));
         assertThrows(IllegalArgumentException.class, () -> files.mp4("../x"));
+        assertThrows(IllegalArgumentException.class, () -> files.mp4("../2026-11-18/21-45-49"));
+        assertThat(files.mp4("Porta.../2026-11-18/21-45-49").getFileName().toString()).isEqualTo("21-45-49.mp4");
     }
 
     @Test

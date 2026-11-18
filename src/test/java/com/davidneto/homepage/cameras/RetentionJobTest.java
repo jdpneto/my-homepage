@@ -46,12 +46,20 @@ class RetentionJobTest {
     }
 
     String clipDaysAgo(double days) throws Exception {
+        return clipDaysAgo(days, days);
+    }
+
+    /** A clip recorded {@code days} ago (hub clock) that arrived on the VPS {@code arrivedDaysAgo} ago. */
+    String clipDaysAgo(double days, double arrivedDaysAgo) throws Exception {
         OffsetDateTime start = NOW.minusSeconds((long) (days * 86400)).atOffset(ZoneOffset.ofHours(1));
         String stem = "Garage/" + start.toLocalDate() + "/" + String.format("%02d-%02d-%02d",
                 start.getHour(), start.getMinute(), start.getSecond());
         ClipFilesTest.clip(root, stem, """
                 {"camera_name":"Garage","camera_id":"g","channel":0,"start":"%s","end":"%s",
                  "duration_seconds":10,"triggers":["person"]}""".formatted(start, start.plusSeconds(10)));
+        java.nio.file.attribute.FileTime arrived = java.nio.file.attribute.FileTime.from(
+                NOW.minusSeconds((long) (arrivedDaysAgo * 86400)));
+        Files.setLastModifiedTime(root.resolve(stem + ".mp4"), arrived);
         return stem;
     }
 
@@ -148,5 +156,41 @@ class RetentionJobTest {
         fail[0] = false;
         flaky.scheduled();
         assertThat(flaky.lastFailure()).isEmpty();
+    }
+
+    @Test
+    void wrongHubClockNeverDeletesNewArrivals() throws Exception {
+        // hub booted with a wrong date: clip stamped 400 days ago but it arrived today
+        String stem = clipDaysAgo(400, 0);
+        assertThat(job.run().deleted()).isZero();
+        assertThat(root.resolve(stem + ".mp4")).exists();
+    }
+
+    @Test
+    void boundaryIsExactlyThirtyDays() throws Exception {
+        String justInside = clipDaysAgo(30 - 1.0 / 24);
+        String justOutside = clipDaysAgo(30 + 1.0 / 24);
+        job.run();
+        assertThat(root.resolve(justInside + ".mp4")).exists();
+        assertThat(root.resolve(justOutside + ".mp4")).doesNotExist();
+    }
+
+    @Test
+    void orphanMp4WithoutSidecarIsCleanedWhenOldAndNotKept() throws Exception {
+        String indexed = clipDaysAgo(5); // keeps the index non-empty
+        ClipFilesTest.clip(root, "Garage/2026-10-01/10-00-00", null);
+        Files.setLastModifiedTime(root.resolve("Garage/2026-10-01/10-00-00.mp4"),
+                java.nio.file.attribute.FileTime.from(NOW.minusSeconds(40L * 86400)));
+        ClipFilesTest.clip(root, "Garage/2026-10-02/10-00-00", null);
+        Files.setLastModifiedTime(root.resolve("Garage/2026-10-02/10-00-00.mp4"),
+                java.nio.file.attribute.FileTime.from(NOW.minusSeconds(40L * 86400)));
+        files.setKept("Garage/2026-10-02/10-00-00", true);
+        ClipFilesTest.clip(root, "Garage/2026-12-19/10-00-00", null); // young orphan (still uploading)
+        Files.setLastModifiedTime(root.resolve("Garage/2026-12-19/10-00-00.mp4"), java.nio.file.attribute.FileTime.from(NOW));
+        job.run();
+        assertThat(root.resolve("Garage/2026-10-01/10-00-00.mp4")).doesNotExist();
+        assertThat(root.resolve("Garage/2026-10-02/10-00-00.mp4")).exists();
+        assertThat(root.resolve("Garage/2026-12-19/10-00-00.mp4")).exists();
+        assertThat(root.resolve(indexed + ".mp4")).exists();
     }
 }

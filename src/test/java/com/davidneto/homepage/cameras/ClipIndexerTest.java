@@ -126,4 +126,20 @@ class ClipIndexerTest {
         assertThat(indexer.reconcile().added()).isZero();
         assertThat(repo.count()).isZero();
     }
+
+    @Test
+    void cameraNameWithDotsIsIndexed() throws Exception {
+        ClipFilesTest.clip(root, "Porta.../2026-11-18/21-45-49", ClipFilesTest.SIDECAR.replace("\"Garage\"", "\"Porta...\""));
+        assertThat(indexer.reconcile().added()).isEqualTo(1);
+    }
+
+    @Test
+    void oneBadClipDoesNotStopTheOthers() throws Exception {
+        String longName = "x".repeat(300); // too long for camera_name: the insert fails
+        ClipFilesTest.clip(root, "Bad/2026-11-18/21-45-49", ClipFilesTest.SIDECAR.replace("\"Garage\"", "\"" + longName + "\""));
+        ClipFilesTest.clip(root, "Garage/2026-11-18/21-45-50", ClipFilesTest.SIDECAR);
+        ClipIndexer.IndexResult r = indexer.reconcile();
+        assertThat(repo.findByStem("Garage/2026-11-18/21-45-50")).isPresent();
+        assertThat(r.volumeOk()).isTrue();
+    }
 }
