@@ -30,6 +30,7 @@ public class RetentionJob {
     private final CameraProperties props;
     private final Clock clock;
     private volatile String lastFailure;
+    private volatile boolean ranSinceStart;
 
     public RetentionJob(ClipFiles files, CameraClipRepository repo, ClipThumbnailer thumbnailer, ClipIndexer indexer,
                         CameraProperties props, Clock clock) {
@@ -49,12 +50,19 @@ public class RetentionJob {
         } catch (RuntimeException e) {
             lastFailure = e.toString();
             log.error("camera cleanup failed", e);
+        } finally {
+            ranSinceStart = true;
         }
     }
 
     /** Error text of the most recent scheduled run if it failed; empty after a successful run. */
     public Optional<String> lastFailure() {
         return Optional.ofNullable(lastFailure);
+    }
+
+    /** False until the scheduled cleanup has run in this process: its outcome is unknown until then. */
+    public boolean hasRunSinceStart() {
+        return ranSinceStart;
     }
 
     public RetentionResult run() {

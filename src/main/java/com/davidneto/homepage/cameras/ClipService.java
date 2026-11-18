@@ -26,6 +26,11 @@ import java.util.stream.Stream;
 @Service
 public class ClipService {
 
+    static final String WARN_VOLUME_MISSING = "camera volume missing";
+    static final String WARN_VOLUME = "camera volume ";
+    static final String WARN_QUOTA = "camera quota ";
+    static final String WARN_ROOT = "VPS root disk ";
+
     private final ClipFiles files;
     private final ClipThumbnailer thumbnailer;
     private final CameraClipRepository repo;
@@ -130,19 +135,20 @@ public class ClipService {
             } catch (RuntimeException ignored) {
                 // malformed heartbeat: treated as missing
             }
-            if (hb.get().has("hub_ok")) hubOk = hb.get().get("hub_ok").asBoolean();
+            var hubOkNode = hb.get().get("hub_ok");
+            if (hubOkNode != null && hubOkNode.isBoolean()) hubOk = hubOkNode.asBoolean(); // null = unknown, not down
         }
 
         List<String> warnings = new ArrayList<>();
-        if (!volumeOk) warnings.add("camera volume missing");
+        if (!volumeOk) warnings.add(WARN_VOLUME_MISSING);
         if (volumeOk && percentUsed(volumeTotal - volumeFree, volumeTotal) >= props.getWarnPercent()) {
-            warnings.add("camera volume " + percentUsed(volumeTotal - volumeFree, volumeTotal) + "% full");
+            warnings.add(WARN_VOLUME + percentUsed(volumeTotal - volumeFree, volumeTotal) + "% full");
         }
         if (quotaBytes > 0 && percentUsed(quotaUsed, quotaBytes) >= props.getWarnPercent()) {
-            warnings.add("camera quota " + percentUsed(quotaUsed, quotaBytes) + "% used");
+            warnings.add(WARN_QUOTA + percentUsed(quotaUsed, quotaBytes) + "% used");
         }
         if (percentUsed(rootTotal - rootFree, rootTotal) >= props.getRootDiskWarnPercent()) {
-            warnings.add("VPS root disk " + percentUsed(rootTotal - rootFree, rootTotal) + "% full");
+            warnings.add(WARN_ROOT + percentUsed(rootTotal - rootFree, rootTotal) + "% full");
         }
 
         return new StorageStatus(volumeOk, volumeTotal, volumeFree, quotaBytes, quotaUsed,
