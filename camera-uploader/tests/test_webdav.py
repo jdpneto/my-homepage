@@ -95,18 +95,27 @@ async def test_non_ascii_and_spaces_are_percent_encoded():
     assert rec.requests[0].url.raw_path.decode() == "/Cozinha%20%C3%A9/2026-11-16/19-22-58.json"
 
 
-async def test_exists_maps_207_and_404():
-    rec = Recorder(statuses={("PROPFIND", "/volume-marker.txt"): 207, ("PROPFIND", "/nope.txt"): 404})
-    client = rec.client()
-    assert await client.exists("volume-marker.txt") is True
-    assert await client.exists("nope.txt") is False
-    assert rec.requests[0].headers["depth"] == "0"
+async def test_get_text_returns_body_on_200_and_none_on_404():
+    async def handle(request):
+        if request.url.raw_path == b"/volume-marker.txt":
+            return httpx.Response(200, text="camera clips live on the 15 GB volume - do not delete\n")
+        return httpx.Response(404)
+    client = WebDavClient(BASE, "cameras", "pw", transport=httpx.MockTransport(handle))
+    assert (await client.get_text("volume-marker.txt")).startswith("camera clips live on the 15 GB volume")
+    assert await client.get_text("nope.txt") is None
 
 
-async def test_exists_auth_failure_raises():
+async def test_get_text_uses_get_not_propfind():
+    # The real server answers 207 to PROPFIND on paths that do not exist.
+    rec = Recorder(default=404)
+    await rec.client().get_text("volume-marker.txt")
+    assert rec.requests[0].method == "GET"
+
+
+async def test_get_text_auth_failure_raises():
     rec = Recorder(default=401)
     with pytest.raises(AuthError):
-        await rec.client().exists("volume-marker.txt")
+        await rec.client().get_text("volume-marker.txt")
 
 
 async def test_base_url_without_trailing_slash():

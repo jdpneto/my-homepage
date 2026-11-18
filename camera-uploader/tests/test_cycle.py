@@ -44,8 +44,10 @@ class FakeHub:
 
 
 class FakeDav:
-    def __init__(self, marker=True, fail=None):
+    def __init__(self, marker=True, fail=None, marker_text=None):
         self.marker, self.calls, self.fail = marker, [], fail or {}
+        self.marker_text = marker_text if marker_text is not None else (
+            "camera clips live on the 15 GB volume - do not delete\n" if marker else None)
         self.files: dict[str, bytes] = {}
 
     def _maybe_fail(self, op, path):
@@ -56,9 +58,9 @@ class FakeDav:
                     raise exc[0]
                 raise exc
 
-    async def exists(self, path):
-        self.calls.append(("PROPFIND", path))
-        return self.marker
+    async def get_text(self, path):
+        self.calls.append(("GET", path))
+        return self.marker_text
 
     async def ensure_dirs(self, stem):
         self.calls.append(("MKCOL", stem))
@@ -158,7 +160,15 @@ async def test_missing_marker_refuses_before_any_upload(cfg, store):
     hub, dav = FakeHub([clip(5)]), FakeDav(marker=False)
     with pytest.raises(WebDavError, match="volume marker"):
         await run(hub, dav, store, cfg)
-    assert [op for op, _ in dav.calls if op != "PROPFIND"] == []
+    assert [op for op, _ in dav.calls if op != "GET"] == []
+    assert hub.downloads == []
+
+
+async def test_marker_with_wrong_content_refuses(cfg, store):
+    # e.g. a server that answers for any path, or an empty dir Docker created on the root disk
+    hub, dav = FakeHub([clip(5)]), FakeDav(marker_text="")
+    with pytest.raises(WebDavError, match="volume marker"):
+        await run(hub, dav, store, cfg)
     assert hub.downloads == []
 
 

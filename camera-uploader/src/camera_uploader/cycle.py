@@ -22,6 +22,11 @@ from .window import compute_window, next_watermark
 log = logging.getLogger(__name__)
 
 MARKER = "volume-marker.txt"
+MARKER_TEXT = "camera clips live on the 15 GB volume"  # written on the VPS by Task 1
+
+
+class VolumeMarkerMissing(WebDavError):
+    """The share isn't backed by the 15 GB volume; uploading would fill the VPS root disk."""
 
 
 @dataclass
@@ -39,8 +44,10 @@ class ClipFailed(Exception):
 async def run_cycle(hub, dav, store: StateStore, cfg: Config, now: datetime,
                     remux_fn=remux, tz: tzinfo | None = None) -> CycleResult:
     # Refuse before touching anything if the 15 GB volume isn't behind the share.
-    if not await dav.exists(MARKER):
-        raise WebDavError(f"volume marker {MARKER} missing - refusing to upload (is the VPS volume mounted?)")
+    marker = await dav.get_text(MARKER)
+    if marker is None or not marker.startswith(MARKER_TEXT):
+        raise VolumeMarkerMissing(
+            f"volume marker {MARKER} missing or wrong - refusing to upload (is the VPS volume mounted?)")
 
     settle = timedelta(seconds=cfg.settle_seconds)
     start, end = compute_window(now, store.get_watermark(), cfg.backfill_days)

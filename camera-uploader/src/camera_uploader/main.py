@@ -16,7 +16,7 @@ from .config import Config, ConfigError, load_config
 from .cycle import run_cycle
 from .hub import HubError, ReolinkHub
 from .state import StateStore
-from .webdav import AuthError, QuotaFullError, TransientError, WebDavClient
+from .webdav import AuthError, QuotaFullError, TransientError, WebDavClient, WebDavError
 
 log = logging.getLogger("camera_uploader")
 
@@ -88,13 +88,14 @@ async def run_forever(cfg: Config, hub_factory, dav_factory, sleep=asyncio.sleep
             except Exception as exc:
                 consecutive += 1
                 delay = backoff_seconds(exc, consecutive)
-                if isinstance(exc, HubError) or not isinstance(exc, (AuthError, QuotaFullError, TransientError)):
+                known = isinstance(exc, (HubError, WebDavError))
+                if isinstance(exc, HubError) or not known:
                     # Hub trouble or something unexpected: start a fresh hub session next time.
                     await _close_hub(hub)
                     hub = None
                 level = logging.WARNING if isinstance(exc, (HubError, TransientError)) else logging.ERROR
                 log.log(level, "%s: %s - retrying in %ds (failure #%d)", type(exc).__name__, exc, delay, consecutive,
-                        exc_info=not isinstance(exc, (HubError, TransientError, AuthError, QuotaFullError)))
+                        exc_info=not known)
             await sleep(delay)
     finally:
         await _close_hub(hub)

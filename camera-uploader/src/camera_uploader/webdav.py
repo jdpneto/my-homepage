@@ -77,9 +77,14 @@ class WebDavClient:
         await self._send("PUT", self._url(path), ok=(201, 204), content=data,
                          headers={"Content-Type": content_type})
 
-    async def exists(self, path: str) -> bool:
-        response = await self._send("PROPFIND", self._url(path), ok=(207, 404), headers={"Depth": "0"})
-        return response.status_code == 207
+    async def get_text(self, path: str) -> str | None:
+        """GET a small text file; None if it does not exist.
+
+        Deliberately GET, not PROPFIND: the homepage's WebDAV answers 207 to
+        PROPFIND on paths that do not exist (pre-auth proxy resource).
+        """
+        response = await self._send("GET", self._url(path), ok=(200, 404))
+        return response.text if response.status_code == 200 else None
 
     async def aclose(self) -> None:
         await self._http.aclose()

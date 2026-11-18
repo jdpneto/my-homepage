@@ -44,10 +44,10 @@ class FakeDav:
     def __init__(self, exists_exc=None):
         self.exists_exc = exists_exc
 
-    async def exists(self, path):
+    async def get_text(self, path):
         if self.exists_exc:
             raise self.exists_exc
-        return True
+        return "camera clips live on the 15 GB volume - do not delete\n"
 
     async def aclose(self):
         pass
@@ -181,3 +181,15 @@ async def test_sigterm_shuts_down_cleanly(cfg):
     asyncio.get_running_loop().create_task(send_term())
     await serve(cfg, lambda c: FakeHub(), lambda c: FakeDav(), sleep=slow_sleep, clock=lambda: NOW)
     assert FakeHub.instances[0].closed
+
+
+async def test_marker_missing_backs_off_without_resetting_hub(cfg, caplog):
+    from camera_uploader.cycle import VolumeMarkerMissing
+
+    sleep, delays = sleeper(2)
+    with pytest.raises(Stop):
+        await run_forever(cfg, lambda c: FakeHub(), lambda c: FakeDav(VolumeMarkerMissing("missing")),
+                          sleep=sleep, clock=lambda: NOW)
+    assert delays == [300, 300]
+    assert len(FakeHub.instances) == 1          # same hub session kept
+    assert "Traceback" not in caplog.text
