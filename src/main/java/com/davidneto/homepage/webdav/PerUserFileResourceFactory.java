@@ -185,7 +185,7 @@ public class PerUserFileResourceFactory implements ResourceFactory {
         // contextPath without leading slash: Milton builds regex as "/" + contextPath,
         // so "webdav" produces the correct pattern "/webdav".
         FileSystemResourceFactory factory = new FileSystemResourceFactory(userRoot, new NullSecurityManager(), "webdav");
-        factory.setContentService(new AtomicFileContentService());
+        factory.setContentService(new AtomicFileContentService(() -> isProtected(username)));
         return factory;
     }
 

@@ -130,4 +130,11 @@ class ClipFilesTest {
                 "{\"time\":\"2026-11-18T21:50:00+01:00\",\"hub_ok\":true,\"hub_error_since\":null}");
         assertThat(files.readHeartbeat()).hasValueSatisfying(h -> assertThat(h.get("hub_ok").asBoolean()).isTrue());
     }
+
+    @Test
+    void aDirectoryNamedKeepIsNotAKeepMarker() throws Exception {
+        clip(root, "Garage/2026-11-18/21-45-49", SIDECAR);
+        Files.createDirectory(root.resolve("Garage/2026-11-18/21-45-49.keep"));
+        assertThat(files.isKept("Garage/2026-11-18/21-45-49")).isFalse();
+    }
 }

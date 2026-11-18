@@ -108,7 +108,7 @@ public class ClipFiles {
     }
 
     public boolean isKept(String stem) {
-        return Files.exists(resolve(stem, ".keep"));
+        return Files.isRegularFile(resolve(stem, ".keep"));
     }
 
     public void setKept(String stem, boolean kept) {

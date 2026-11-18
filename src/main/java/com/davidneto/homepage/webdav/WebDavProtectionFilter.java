@@ -66,7 +66,7 @@ public class WebDavProtectionFilter extends OncePerRequestFilter {
             return;
         }
 
-        if (DESTRUCTIVE.contains(method) || "PUT".equals(method)) {
+        if (!READ_ONLY.contains(method)) {
             String header = request.getHeader("Authorization");
             if (header != null) {
                 String[] creds = BasicAuthUsername.parseCredentials(header);
@@ -84,9 +84,15 @@ public class WebDavProtectionFilter extends OncePerRequestFilter {
                     return;
                 }
                 if (factory.isProtected(creds[0]) && passwordMatches(creds[0], creds[1])) {
-                    String why = "PUT".equals(method)
-                            ? refusedPut(creds[0], decodedPath(request), request.getContentLengthLong())
-                            : "protected folder: deleting, moving and copying are disabled";
+                    String why;
+                    if (DESTRUCTIVE.contains(method)) {
+                        why = "protected folder: deleting, moving and copying are disabled";
+                    } else if ("PUT".equals(method)) {
+                        why = refusedPut(creds[0], decodedPath(request), request.getContentLengthLong());
+                    } else {
+                        why = isKeepName(decodedPath(request)) || isKeepName(destinationPath(request))
+                                ? "keep markers cannot be written over WebDAV" : null;
+                    }
                     if (why != null) {
                         forbid(response, method, request.getRequestURI(), creds[0], why);
                         return;
@@ -103,7 +109,7 @@ public class WebDavProtectionFilter extends OncePerRequestFilter {
      */
     private String refusedPut(String username, String servletPath, long contentLength) {
         String rel = servletPath == null ? "" : servletPath.replaceFirst("^/webdav/?", "");
-        if (rel.toLowerCase(Locale.ROOT).endsWith(".keep")) return "keep markers cannot be written over WebDAV";
+        if (isKeepName(rel)) return "keep markers cannot be written over WebDAV";
         Path root = factory.userRoot(username);
         Path target = root.resolve(rel).normalize();
         if (!target.startsWith(root) || !Files.exists(target)) return null;
@@ -113,6 +119,12 @@ public class WebDavProtectionFilter extends OncePerRequestFilter {
         if (Files.exists(keep)) return "this clip is kept: it cannot be overwritten";
         if (contentLength == 0) return "an existing file cannot be replaced by an empty one";
         return null;
+    }
+
+    private static boolean isKeepName(String path) {
+        if (path == null) return false;
+        String p = path.endsWith("/") ? path.substring(0, path.length() - 1) : path;
+        return p.toLowerCase(Locale.ROOT).endsWith(".keep");
     }
 
     private boolean passwordMatches(String username, String password) {

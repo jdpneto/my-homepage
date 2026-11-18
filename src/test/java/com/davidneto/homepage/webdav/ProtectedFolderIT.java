@@ -270,4 +270,23 @@ class ProtectedFolderIT {
         assertThat(r.statusCode()).isIn(201, 204);
         assertThat(Files.readString(clip)).isEqualTo("new-bytes");
     }
+
+    @Test
+    void chunkedEmptyPutOverExistingClipIsRefused() throws Exception {
+        HttpResponse<String> r = HttpClient.newHttpClient().send(HttpRequest.newBuilder()
+                .uri(URI.create("http://localhost:" + port + "/webdav/Garage/2026-11-18/21-45-49.mp4"))
+                .PUT(HttpRequest.BodyPublishers.ofInputStream(() -> new java.io.ByteArrayInputStream(new byte[0])))
+                .header("Authorization", "Basic " + Base64.getEncoder()
+                        .encodeToString("cameras:cameras-password-1".getBytes()))
+                .build(), HttpResponse.BodyHandlers.ofString());
+        assertThat(r.statusCode()).isGreaterThanOrEqualTo(400);
+        assertThat(Files.readAllBytes(clip)).containsExactly(1, 2, 3);
+    }
+
+    @Test
+    void mkcolNamedKeepIsRefused() throws Exception {
+        assertThat(dav("MKCOL", "Garage/2026-11-18/21-45-49.keep", "cameras", "cameras-password-1", null)
+                .statusCode()).isEqualTo(403);
+        assertThat(camerasRoot.resolve("Garage/2026-11-18/21-45-49.keep")).doesNotExist();
+    }
 }
