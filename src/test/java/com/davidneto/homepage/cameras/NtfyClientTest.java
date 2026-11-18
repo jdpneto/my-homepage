@@ -13,6 +13,7 @@ import static org.springframework.test.web.client.match.MockRestRequestMatchers.
 import static org.springframework.test.web.client.response.MockRestResponseCreators.withServerError;
 import static org.springframework.test.web.client.response.MockRestResponseCreators.withSuccess;
 
+@org.junit.jupiter.api.extension.ExtendWith(org.springframework.boot.test.system.OutputCaptureExtension.class)
 class NtfyClientTest {
 
     CameraProperties props(String topic) {
@@ -57,5 +58,16 @@ class NtfyClientTest {
         MockRestServiceServer server = MockRestServiceServer.bindTo(builder).build();
         server.expect(requestTo("https://ntfy.sh/topic123")).andRespond(withSuccess());
         assertThat(new NtfyClient(props("topic123"), builder).send("Câmara: armazenamento", "é", "high")).isTrue();
+    }
+
+    @Test
+    void failureLogNeverContainsTheTopic(org.springframework.boot.test.system.CapturedOutput output) {
+        RestClient.Builder builder = RestClient.builder();
+        MockRestServiceServer server = MockRestServiceServer.bindTo(builder).build();
+        server.expect(requestTo("https://ntfy.sh/secret-topic-abc"))
+                .andRespond(org.springframework.test.web.client.response.MockRestResponseCreators
+                        .withException(new java.net.SocketTimeoutException("connect timed out")));
+        new NtfyClient(props("secret-topic-abc"), builder).send("t", "m", "high");
+        assertThat(output.getAll()).contains("ntfy push failed").doesNotContain("secret-topic-abc");
     }
 }

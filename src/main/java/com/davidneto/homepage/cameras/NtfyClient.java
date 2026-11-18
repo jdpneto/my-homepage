@@ -63,7 +63,8 @@ public class NtfyClient implements Notifier {
                     .toBodilessEntity();
             return true;
         } catch (RuntimeException e) {
-            log.warn("ntfy push failed ({}): {}", title, e.toString());
+            // The topic is the secret and exception messages contain the URL: redact it.
+            log.warn("ntfy push failed ({}): {}", title, e.toString().replace(topic, "***"));
             return false;
         }
     }
