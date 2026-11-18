@@ -48,3 +48,9 @@ certs/
 
 # Superpowers
 .superpowers/
+
+# camera-uploader
+camera-uploader/.venv/
+camera-uploader/**/__pycache__/
+camera-uploader/**/*.egg-info/
+camera-uploader/.pytest_cache/

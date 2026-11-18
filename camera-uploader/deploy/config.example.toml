@@ -1,0 +1,25 @@
+# camera-uploader configuration.
+# Installed at /usr/local/etc/camera-uploader/config.toml (mode 600, owner davidneto).
+# Never commit a filled-in copy.
+
+[hub]
+host = "192.168.1.24"
+user = "admin"
+password = "CHANGE_ME"
+
+[webdav]
+url = "https://cloud.davidneto.eu/"
+user = "cameras"
+password = "CHANGE_ME"
+
+[uploader]
+poll_seconds = 30      # how often to ask the hub for new clips
+settle_seconds = 20    # only take clips that ended at least this long ago
+backfill_days = 30     # first run, and the longest catch-up after an outage
+max_attempts = 5       # give up on a clip after this many failed attempts
+
+[paths]
+state = "/usr/local/var/camera-uploader/state.sqlite3"
+tmp = "/usr/local/var/camera-uploader/tmp"
+log = "/usr/local/var/log/camera-uploader/uploader.log"
+ffmpeg = "/opt/homebrew/bin/ffmpeg"
