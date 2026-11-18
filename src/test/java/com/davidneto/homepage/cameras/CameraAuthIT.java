@@ -171,4 +171,35 @@ class CameraAuthIT {
         mvc.perform(get("/admin/posts").header("Authorization", "Bearer " + token()))
                 .andExpect(status().is3xxRedirection());
     }
+
+    @Test
+    void sessionWithBogusBearerHeaderIsNotExemptFromCsrf() throws Exception {
+        int code = mvc.perform(post("/api/cameras/auth/revoke-all").with(user("admin").roles("ADMIN"))
+                .header("Authorization", "Bearer not-a-real-token")).andReturn().getResponse().getStatus();
+        assertThat(code).isIn(401, 403);
+        assertThat(tokens.count()).isZero(); // nothing ran
+    }
+
+    @Test
+    void unauthenticatedRevokeAllIsRefused() throws Exception {
+        String t = token();
+        int code = mvc.perform(post("/api/cameras/auth/revoke-all")).andReturn().getResponse().getStatus();
+        assertThat(code).isIn(401, 403);
+        mvc.perform(get("/api/cameras/cameras").header("Authorization", "Bearer " + t)).andExpect(status().isOk());
+    }
+
+    @Test
+    void expiredTokenIsNotDeletedDuringRequestsButPurgedOnNextLogin() throws Exception {
+        String t = token();
+        CameraToken row = tokens.findAll().get(0);
+        row.setExpiresAt(Instant.now().minusSeconds(1));
+        tokens.save(row);
+        for (int i = 0; i < 3; i++) {
+            mvc.perform(get("/api/cameras/cameras").header("Authorization", "Bearer " + t))
+                    .andExpect(status().isUnauthorized());
+        }
+        assertThat(tokens.count()).isEqualTo(1);
+        token();
+        assertThat(tokens.count()).isEqualTo(1); // expired one purged, new one issued
+    }
 }

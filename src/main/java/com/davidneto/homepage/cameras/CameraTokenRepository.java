@@ -6,4 +6,8 @@ import java.util.Optional;
 
 public interface CameraTokenRepository extends JpaRepository<CameraToken, Long> {
     Optional<CameraToken> findByTokenHash(String tokenHash);
+
+    @org.springframework.data.jpa.repository.Modifying
+    @org.springframework.transaction.annotation.Transactional
+    long deleteByExpiresAtBefore(java.time.Instant cutoff);
 }

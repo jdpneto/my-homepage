@@ -62,13 +62,10 @@ public class ClipService {
             if (q.from() != null) ps.add(cb.greaterThanOrEqualTo(r.get("startAt"), q.from().toInstant()));
             if (q.to() != null) ps.add(cb.lessThan(r.get("startAt"), q.to().toInstant()));
             if (q.kept() != null) ps.add(cb.equal(r.get("kept"), q.kept()));
-            if (q.beforeId() != null) {
-                Optional<CameraClip> cursor = repo.findById(q.beforeId());
-                if (cursor.isPresent()) {
-                    var start = cursor.get().getStartAt();
-                    ps.add(cb.or(cb.lessThan(r.get("startAt"), start),
-                            cb.and(cb.equal(r.get("startAt"), start), cb.lessThan(r.get("id"), q.beforeId()))));
-                }
+            if (q.before() != null) {
+                var start = q.before().start();
+                ps.add(cb.or(cb.lessThan(r.get("startAt"), start),
+                        cb.and(cb.equal(r.get("startAt"), start), cb.lessThan(r.get("id"), q.before().id()))));
             }
             return cb.and(ps.toArray(Predicate[]::new));
         };
@@ -108,8 +105,8 @@ public class ClipService {
         return thumbnailer.ensure(c.getStem());
     }
 
-    public List<String> cameras() {
-        return repo.findCameraNames();
+    public List<CameraInfo> cameras() {
+        return repo.findCameras();
     }
 
     public StorageStatus status() {

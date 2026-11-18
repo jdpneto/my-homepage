@@ -15,6 +15,11 @@ public class CameraApiErrors {
         return ResponseEntity.status(HttpStatus.NOT_FOUND).body(Map.of("error", e.getMessage()));
     }
 
+    @ExceptionHandler(ClipCursor.BadCursorException.class)
+    public ResponseEntity<Map<String, String>> badCursor(ClipCursor.BadCursorException e) {
+        return ResponseEntity.badRequest().body(Map.of("error", e.getMessage()));
+    }
+
     @ExceptionHandler(ClipKeptException.class)
     public ResponseEntity<Map<String, String>> kept(ClipKeptException e) {
         return ResponseEntity.status(HttpStatus.CONFLICT).body(Map.of("error", e.getMessage()));

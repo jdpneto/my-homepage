@@ -95,7 +95,7 @@ class CameraApiIT {
         assertThat(page1.get("clips").get(0).get("start").asString()).isEqualTo("2026-11-18T21:49:41+01:00");
         assertThat(page1.get("clips").get(0).get("camera").asString()).isEqualTo("Garage");
         assertThat(page1.get("clips").get(0).get("triggers").get(0).asString()).isEqualTo("motion");
-        long next = page1.get("nextBefore").asLong();
+        String next = page1.get("nextBefore").asString();
         JsonNode page2 = getJson("/api/cameras/clips?limit=2&before=" + next);
         assertThat(page2.get("clips")).hasSize(1);
         assertThat(page2.get("nextBefore").isNull()).isTrue();
@@ -197,8 +197,9 @@ class CameraApiIT {
         assertThat(s.get("warnings").isArray()).isTrue();
         assertThat(s.get("newestByCamera").get("Garage").asString()).isEqualTo("2026-11-18T21:49:41+01:00");
         JsonNode cams = getJson("/api/cameras/cameras");
-        assertThat(cams.get(0).asString()).isEqualTo("Garage");
-        assertThat(cams.get(1).asString()).isEqualTo("Living Room");
+        assertThat(cams.get(0).get("name").asString()).isEqualTo("Garage");
+        assertThat(cams.get(0).get("cameraId").asString()).isEqualTo("id");
+        assertThat(cams.get(1).get("name").asString()).isEqualTo("Living Room");
     }
 
     @Test
@@ -216,5 +217,21 @@ class CameraApiIT {
         int code = mvc.perform(org.springframework.test.web.servlet.request.MockMvcRequestBuilders
                 .post("/api/cameras/alerts/test")).andReturn().getResponse().getStatus();
         assertThat(code).isIn(401, 403);
+    }
+
+    @Test
+    void deletingTheCursorClipDoesNotRestartTheList() throws Exception {
+        JsonNode page1 = getJson("/api/cameras/clips?limit=2");
+        long lastId = page1.get("clips").get(1).get("id").asLong();
+        String cursor = page1.get("nextBefore").asString();
+        mvc.perform(delete("/api/cameras/clips/" + lastId).with(admin).with(csrf())).andExpect(status().isNoContent());
+        JsonNode page2 = getJson("/api/cameras/clips?limit=2&before=" + cursor);
+        assertThat(page2.get("clips")).hasSize(1);
+        assertThat(page2.get("clips").get(0).get("camera").asString()).isEqualTo("Living Room");
+    }
+
+    @Test
+    void malformedCursorIs400() throws Exception {
+        mvc.perform(get("/api/cameras/clips?before=abc").with(admin)).andExpect(status().isBadRequest());
     }
 }

@@ -12,8 +12,9 @@ public interface CameraClipRepository extends JpaRepository<CameraClip, Long>, J
 
     List<CameraClip> findByStartAtBefore(java.time.Instant cutoff);
 
-    @Query("select distinct c.cameraName from CameraClip c order by c.cameraName")
-    List<String> findCameraNames();
+    @Query("select new com.davidneto.homepage.cameras.CameraInfo(c.cameraName, max(c.cameraId)) "
+            + "from CameraClip c group by c.cameraName order by c.cameraName")
+    List<CameraInfo> findCameras();
 
     @Query("select coalesce(sum(c.sizeBytes), 0) from CameraClip c where c.kept = :kept")
     long sumSizeByKept(boolean kept);

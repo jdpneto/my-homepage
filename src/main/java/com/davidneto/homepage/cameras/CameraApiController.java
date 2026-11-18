@@ -46,13 +46,13 @@ public class CameraApiController {
                                     @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE_TIME) OffsetDateTime from,
                                     @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE_TIME) OffsetDateTime to,
                                     @RequestParam(required = false) Boolean kept,
-                                    @RequestParam(required = false) Long before,
+                                    @RequestParam(required = false) String before,
                                     @RequestParam(required = false, defaultValue = "50") int limit) {
-        ClipQuery q = new ClipQuery(camera, trigger, from, to, kept, before, limit);
+        ClipQuery q = new ClipQuery(camera, trigger, from, to, kept, ClipCursor.parse(before), limit);
         List<ClipView> page = clips.list(q);
         Map<String, Object> body = new HashMap<>();
         body.put("clips", page);
-        body.put("nextBefore", page.size() == q.effectiveLimit() ? page.get(page.size() - 1).id() : null);
+        body.put("nextBefore", page.size() == q.effectiveLimit() ? ClipCursor.of(page.get(page.size() - 1)).toString() : null);
         return body;
     }
 
@@ -110,7 +110,7 @@ public class CameraApiController {
     }
 
     @GetMapping("/cameras")
-    public List<String> cameras() {
+    public List<CameraInfo> cameras() {
         return clips.cameras();
     }
 

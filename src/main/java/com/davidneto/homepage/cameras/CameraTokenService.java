@@ -42,6 +42,7 @@ public class CameraTokenService {
 
     @Transactional
     public Issued issue(String label) {
+        repo.deleteByExpiresAtBefore(clock.instant()); // purge expired logins
         byte[] bytes = new byte[32];
         random.nextBytes(bytes);
         String raw = Base64.getUrlEncoder().withoutPadding().encodeToString(bytes);
@@ -64,8 +65,7 @@ public class CameraTokenService {
         CameraToken t = found.get();
         Instant now = clock.instant();
         if (!t.getExpiresAt().isAfter(now)) {
-            repo.delete(t);
-            return Optional.empty();
+            return Optional.empty(); // not deleted here: parallel requests would race on the delete
         }
         if (t.getLastUsedAt() == null || Duration.between(t.getLastUsedAt(), now).compareTo(TOUCH_EVERY) >= 0) {
             t.setLastUsedAt(now);

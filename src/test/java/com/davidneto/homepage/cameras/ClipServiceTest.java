@@ -93,12 +93,12 @@ class ClipServiceTest {
     void listNewestFirstWithKeysetPaging() throws Exception {
         fiveClips();
         List<ClipView> seen = new ArrayList<>();
-        Long before = null;
+        ClipCursor before = null;
         for (int i = 0; i < 4; i++) {
             List<ClipView> page = service.list(new ClipQuery(null, null, null, null, null, before, 2));
             if (page.isEmpty()) break;
             seen.addAll(page);
-            before = page.get(page.size() - 1).id();
+            before = ClipCursor.of(page.get(page.size() - 1));
         }
         assertThat(seen).hasSize(5);
         assertThat(new HashSet<>(seen.stream().map(ClipView::id).toList())).hasSize(5);
@@ -122,7 +122,8 @@ class ClipServiceTest {
         assertThat(service.list(new ClipQuery(null, null, OffsetDateTime.parse("2026-11-17T00:00:00+01:00"),
                 OffsetDateTime.parse("2026-11-18T00:00:00+01:00"), null, null, 50)))
                 .extracting(ClipView::camera).containsExactly("Backyard");
-        assertThat(service.cameras()).containsExactly("Backyard", "Garage", "Living Room");
+        assertThat(service.cameras()).extracting(CameraInfo::name).containsExactly("Backyard", "Garage", "Living Room");
+        assertThat(service.cameras()).extracting(CameraInfo::cameraId).containsExactly("id-Backyard", "id-Garage", "id-Living Room");
     }
 
     @Test
