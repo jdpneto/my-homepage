@@ -224,3 +224,16 @@ async def test_cycle_uses_hub_clock_and_warns_on_skew(cfg, caplog):
         await run_forever(cfg, lambda c: SkewedHub(), lambda c: FakeDav(), sleep=sleep, clock=lambda: NOW)
     assert SkewedHub.windows[0][1] == hub_time
     assert "clock" in caplog.text.lower()
+
+
+def test_setup_logging_silences_udp_spam_and_keeps_launchd_stderr_quiet(tmp_path, monkeypatch):
+    import sys as _sys
+
+    from camera_uploader.main import setup_logging
+
+    monkeypatch.setattr(_sys.stderr, "isatty", lambda: False)
+    setup_logging(tmp_path / "log" / "uploader.log")
+    # reolink-aio logs a WARNING every 0.5 s while the hub is unreachable
+    assert logging.getLogger("reolink_aio.baichuan.udp_protocol").getEffectiveLevel() >= logging.ERROR
+    console = [h for h in logging.getLogger().handlers if not hasattr(h, "baseFilename")]
+    assert console and all(h.level >= logging.ERROR for h in console)  # launchd.err.log is never rotated

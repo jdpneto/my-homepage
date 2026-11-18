@@ -12,9 +12,10 @@
         <string>/usr/local/etc/camera-uploader/config.toml</string>
     </array>
 
-    <!-- Runs at boot, before anyone logs in, as the unprivileged user. -->
-    <key>UserName</key>
-    <string>davidneto</string>
+    <!-- Runs at boot, before anyone logs in, as root. Deliberately no UserName:
+         macOS Local Network Privacy blocks LAN access (hub at 192.168.1.24,
+         "No route to host") for a daemon running as a normal user, and there is
+         no screen to approve it on. Root daemons are exempt. -->
     <key>RunAtLoad</key>
     <true/>
     <key>KeepAlive</key>

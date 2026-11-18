@@ -58,12 +58,15 @@ def setup_logging(log_path: Path) -> None:
     file_handler.setFormatter(fmt)
     console = logging.StreamHandler(sys.stderr)
     console.setFormatter(fmt)
-    # Interactive (--once by hand): everything. Under launchd: warnings only, the file has the rest.
-    console.setLevel(logging.INFO if sys.stderr.isatty() else logging.WARNING)
+    # Interactive (--once by hand): everything. Under launchd: errors only - launchd's
+    # stderr file is never rotated; the rotating file has the rest.
+    console.setLevel(logging.INFO if sys.stderr.isatty() else logging.ERROR)
     root = logging.getLogger()
     root.handlers[:] = [file_handler, console]
     root.setLevel(logging.INFO)
     logging.getLogger("reolink_aio").setLevel(logging.WARNING)
+    # Logs a WARNING every 0.5 s while the hub is unreachable; our own HubError line covers it.
+    logging.getLogger("reolink_aio.baichuan.udp_protocol").setLevel(logging.ERROR)
     logging.getLogger("httpx").setLevel(logging.WARNING)
 
 

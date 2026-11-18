@@ -16,7 +16,7 @@
 set -euo pipefail
 
 LABEL=eu.davidneto.camera-uploader
-RUN_USER=davidneto   # must match UserName in the plist
+BREW_USER=davidneto  # Homebrew refuses to run as root; the service itself runs as root (see plist)
 SRC="$(cd "$(dirname "$0")/.." && pwd)"
 PREFIX=/opt/camera-uploader
 RELEASE=$PREFIX/releases/$(date +%Y%m%d%H%M%S)
@@ -35,7 +35,7 @@ RECONFIGURE=no
 say()  { printf '>>> %s\n' "$*"; }
 warn() { printf '!!! %s\n' "$*" >&2; }
 die()  { warn "$*"; exit 1; }
-as_user() { sudo -u "$RUN_USER" -H "$@"; }
+as_brew_user() { sudo -u "$BREW_USER" -H "$@"; }
 
 STOPPED=no
 DONE=no
@@ -62,17 +62,17 @@ ask_password() {  # $1 = prompt; prints the password on stdout
 }
 
 [ "$(id -u)" = 0 ] || die "run with sudo: sudo $0"
-id "$RUN_USER" >/dev/null 2>&1 || die "user $RUN_USER does not exist"
+id "$BREW_USER" >/dev/null 2>&1 || die "user $BREW_USER does not exist"
 [ -x "$BREW" ] || die "Homebrew not found at $BREW"
-if ! as_user "$BREW" --version >/dev/null 2>&1 || ! as_user "$BREW" config >/dev/null 2>&1; then
+if ! as_brew_user "$BREW" --version >/dev/null 2>&1 || ! as_brew_user "$BREW" config >/dev/null 2>&1; then
     die "Homebrew at $BREW does not work on this macOS (too old, or Command Line Tools/git missing).
     Fix: install the Command Line Tools (sudo softwareupdate -i \"Command Line Tools for Xcode ...\"),
     then run: $BREW update"
 fi
 
-say "Homebrew packages (python@3.13, ffmpeg) as $RUN_USER"
-as_user "$BREW" list python@3.13 >/dev/null 2>&1 || as_user "$BREW" install python@3.13
-as_user "$BREW" list ffmpeg >/dev/null 2>&1 || as_user "$BREW" install ffmpeg
+say "Homebrew packages (python@3.13, ffmpeg) as $BREW_USER"
+as_brew_user "$BREW" list python@3.13 >/dev/null 2>&1 || as_brew_user "$BREW" install python@3.13
+as_brew_user "$BREW" list ffmpeg >/dev/null 2>&1 || as_brew_user "$BREW" install ffmpeg
 [ -x "$PY" ] || die "$PY missing after brew install"
 [ -x /opt/homebrew/bin/ffmpeg ] || die "ffmpeg missing after brew install"
 
@@ -87,8 +87,8 @@ chown -R root:wheel "$RELEASE"
 chmod -R go-w "$RELEASE"
 
 say "Directories"
-install -d -o "$RUN_USER" -g staff -m 755 "$VAR" "$VAR/tmp" "$LOGDIR"
-install -d -o root -g wheel -m 755 "$ETC"
+install -d -o root -g wheel -m 755 "$VAR" "$VAR/tmp" "$LOGDIR" "$ETC"
+chown -R root:wheel "$VAR" "$LOGDIR"   # earlier versions ran as davidneto
 
 TEST_CONFIG=$CONFIG
 if [ ! -f "$CONFIG" ] || [ "$RECONFIGURE" = yes ]; then
@@ -105,7 +105,7 @@ from camera_uploader.config import render_config
 sys.stdout.write(render_config(open(os.environ["TEMPLATE"]).read(), os.environ["HUB_PW"], os.environ["DAV_PW"]))
 ' > "$NEW_CONFIG" )
     unset HUB_PW DAV_PW
-    chown "$RUN_USER":staff "$NEW_CONFIG"
+    chown root:wheel "$NEW_CONFIG"
     chmod 600 "$NEW_CONFIG"
     TEST_CONFIG=$NEW_CONFIG
 fi
@@ -123,7 +123,7 @@ if launchctl print "system/$LABEL" >/dev/null 2>&1; then
 fi
 
 say "Test run of the new release (--once). The first run uploads up to 30 days of clips and can take a while."
-if ! as_user "$RELEASE/venv/bin/camera-uploader" --config "$TEST_CONFIG" --once; then
+if ! "$RELEASE/venv/bin/camera-uploader" --config "$TEST_CONFIG" --once; then
     die "test run failed - see $LOGDIR/uploader.log. Nothing was switched over. Wrong password? rerun with --reconfigure"
 fi
 
@@ -131,6 +131,8 @@ if [ -n "$NEW_CONFIG" ]; then
     mv "$NEW_CONFIG" "$CONFIG"
     NEW_CONFIG=""
 fi
+chown root:wheel "$CONFIG"
+chmod 600 "$CONFIG"
 
 say "Switching to the new release"
 ln -sfn "$RELEASE" "$CURRENT.tmp"
