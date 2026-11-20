@@ -185,6 +185,29 @@
         return el.getAttribute('aria-disabled') === 'true';
     }
 
+    // Per-button "ignore clicks until" times. After an action completes (or the player moves
+    // to another clip) the second half of a double-click/double-tap must not start a new
+    // action: Keep would unkeep, an alerts toggle would flip back, Delete would re-arm.
+    const quietUntil = new WeakMap();
+
+    function quietFor(el, ms) {
+        quietUntil.set(el, performance.now() + ms);
+    }
+
+    function isQuiet(el) {
+        return performance.now() < (quietUntil.get(el) || 0);
+    }
+
+    /** whileBusy, ignoring clicks while quiet; quiet for CONFIRM_MIN_MS once the task ends. */
+    async function guarded(el, task) {
+        if (isBusy(el) || isQuiet(el)) return;
+        try {
+            await whileBusy(el, task);
+        } finally {
+            quietFor(el, CONFIRM_MIN_MS);
+        }
+    }
+
     // ---------------------------------------------------------------- API
 
     class ApiError extends Error {
@@ -374,6 +397,20 @@
         clips.parentElement.insertBefore(empty, clips);
     }
 
+    // ---------------------------------------------------------------- camera cards
+
+    // On a phone the cards are one horizontal strip (cameras.css): bring the selected camera
+    // into view. Only the strip's scrollLeft moves; never the page (no scrollIntoView).
+    (function revealCurrentCard() {
+        const card = document.querySelector('.cam-cards .camera-card[aria-current="true"]');
+        const strip = card && card.parentElement;
+        if (!strip || strip.scrollWidth <= strip.clientWidth) return;
+        const s = strip.getBoundingClientRect();
+        const c = card.getBoundingClientRect();
+        if (c.left >= s.left && c.right <= s.right) return; // already fully visible
+        strip.scrollLeft += c.left - s.left; // card at the start, matching scroll-snap-align: start
+    })();
+
     // ---------------------------------------------------------------- infinite scroll
 
     let loading = null; // the in-flight page load, shared by the observer and the player
@@ -516,6 +553,9 @@
         current = row;
         detachedPrevious = null;
         disarmDelete();
+        // A quick second tap after "Yes, delete" (or after prev/next) lands on this clip's
+        // Delete: it must not arm it.
+        quietFor(btnDelete, CONFIRM_MIN_MS);
         showMessage('');
         const title = playerTitleFor(row);
         playerTitle.textContent = title;
@@ -655,7 +695,8 @@
     btnKeep.addEventListener('click', () => {
         const row = current;
         if (!row || !row.isConnected) return; // detached = deleted, the next page is loading
-        whileBusy(btnKeep, async () => {
+        // guarded: a double-tap must not keep and then at once unkeep.
+        guarded(btnKeep, async () => {
             const keep = row.dataset.kept !== 'true';
             try {
                 const view = await api(clipPath(row.dataset.id, '/keep'), keep ? 'PUT' : 'DELETE');
@@ -674,10 +715,12 @@
 
     // Delete: kept clips get the message (no API call); others need a second, separate click
     // within 4 s. A click sooner than CONFIRM_MIN_MS after arming is the other half of a
-    // double-click or double-tap and is ignored (the button stays armed).
+    // double-click or double-tap and is ignored (the button stays armed). Clicks are also
+    // ignored while the delete runs and for CONFIRM_MIN_MS after it (and after any clip
+    // opens), so the second tap of a double-tap on "Yes, delete" does not arm the next clip.
     btnDelete.addEventListener('click', () => {
         const row = current;
-        if (!row || !row.isConnected || isBusy(btnDelete)) return;
+        if (!row || !row.isConnected || isBusy(btnDelete) || isQuiet(btnDelete)) return;
         if (row.dataset.kept === 'true') {
             disarmDelete();
             showMessage(KEPT_MESSAGE);
@@ -693,7 +736,7 @@
         }
         if (performance.now() - deleteArmedAt < CONFIRM_MIN_MS) return;
         disarmDelete();
-        whileBusy(btnDelete, async () => {
+        guarded(btnDelete, async () => {
             try {
                 await api(clipPath(row.dataset.id), 'DELETE');
                 await dropAndAdvance(row);
@@ -782,10 +825,11 @@
 
     // ---------------------------------------------------------------- storage panel buttons
 
+    /** Busy while `handler` runs, then quiet for CONFIRM_MIN_MS (no double-tap repeats). */
     function onClick(id, handler) {
         const el = document.getElementById(id);
         if (!el) return;
-        el.addEventListener('click', () => whileBusy(el, handler));
+        el.addEventListener('click', () => guarded(el, handler));
     }
 
     // "Sign out all app devices" asks first, like Delete: the first click arms "Yes, sign out all"
@@ -802,7 +846,8 @@
             revokeBtn.classList.remove('confirm');
         };
         revokeBtn.addEventListener('click', () => {
-            if (isBusy(revokeBtn)) return;
+            // Quiet after it fired: the second half of a double-click must not re-arm it.
+            if (isBusy(revokeBtn) || isQuiet(revokeBtn)) return;
             if (!revokeArmedAt) {
                 revokeArmedAt = performance.now();
                 revokeBtn.textContent = 'Yes, sign out all';
@@ -812,7 +857,7 @@
             }
             if (performance.now() - revokeArmedAt < CONFIRM_MIN_MS) return;
             disarmRevoke();
-            whileBusy(revokeBtn, async () => {
+            guarded(revokeBtn, async () => {
                 try {
                     const body = await api('/auth/revoke-all', 'POST');
                     const n = Number(body && body.revoked) || 0;
@@ -840,8 +885,6 @@
 
     const alertsState = document.getElementById('alerts-state');
     const alertsToggle = document.getElementById('alerts-toggle');
-    // Confirms "Turn alerts off" / "Mute 8 h" to screen readers.
-    if (alertsState) alertsState.setAttribute('aria-live', 'polite');
 
     /** Accepts the API's Instant (ISO string; epoch seconds if Jackson ever writes numbers). */
     function toDate(until) {
@@ -855,13 +898,21 @@
         const until = muted ? toDate(state.until) : null;
         if (alertsState) {
             alertsState.dataset.muted = muted ? 'true' : 'false';
-            // Browser local time here; the server renders it in the cameras' offset on reload.
+            // Browser local time, on load (below) as after a toggle, so the two always agree.
             alertsState.textContent = !muted ? 'Alerts on'
                 : until ? 'Alerts muted until ' + pad2(until.getHours()) + ':' + pad2(until.getMinutes())
                     : 'Alerts off';
         }
         if (alertsToggle) alertsToggle.textContent = muted ? 'Turn alerts on' : 'Turn alerts off';
     }
+
+    // The server writes "muted until" in the cameras' offset; re-render it from data-until
+    // (ISO instant) in local time like a toggle does. Before aria-live, so it is not announced.
+    if (alertsState && alertsState.dataset.muted === 'true' && toDate(alertsState.dataset.until)) {
+        renderAlerts({ muted: true, until: alertsState.dataset.until });
+    }
+    // Confirms "Turn alerts off" / "Mute 8 h" to screen readers.
+    if (alertsState) alertsState.setAttribute('aria-live', 'polite');
 
     async function setMute(muted, until) {
         try {

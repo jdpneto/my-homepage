@@ -825,6 +825,18 @@ body:has(.cam-player:not([hidden])) .cam-toast {
         min-height: 44px; /* = --tap, which is defined on .cam-page, not here */
     }
 
+    /* "logout" is a <form><button> (POST) with inline styles: 12px in --text-muted
+     * (#555 on #0a0a0a, ~2.6:1). Same size, colour and tap height as the nav links. */
+    body > .nav > form > button {
+        display: inline-flex;
+        align-items: center;
+        min-height: 44px;
+        min-width: 44px;
+        font-size: inherit !important;
+        color: var(--text-secondary) !important;
+        -webkit-tap-highlight-color: transparent;
+    }
+
     body > .nav,
     body > .nav > div {
         row-gap: 0 !important;
