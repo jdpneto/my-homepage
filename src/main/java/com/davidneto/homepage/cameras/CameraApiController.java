@@ -10,6 +10,8 @@ import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.RequestBody;
+import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PutMapping;
 import org.springframework.web.bind.annotation.RequestMapping;
@@ -108,6 +110,22 @@ public class CameraApiController {
         clips.delete(id);
         return ResponseEntity.noContent().build();
     }
+
+    /** Deletes exactly these clips (1–500 ids); kept clips are skipped and reported. */
+    @PostMapping("/clips/delete")
+    public BulkDeleteResult deleteMany(@RequestBody BulkDeleteRequest body) {
+        if (body == null || body.ids() == null || body.ids().isEmpty() || body.ids().size() > MAX_BULK
+                || body.ids().contains(null)) {
+            throw new org.springframework.web.server.ResponseStatusException(
+                    org.springframework.http.HttpStatus.BAD_REQUEST, "ids: 1 to " + MAX_BULK + " clip ids");
+        }
+        return clips.deleteMany(body.ids());
+    }
+
+    public record BulkDeleteRequest(List<Long> ids) {
+    }
+
+    static final int MAX_BULK = 500;
 
     @GetMapping("/cameras")
     public List<CameraSummary> cameras() {

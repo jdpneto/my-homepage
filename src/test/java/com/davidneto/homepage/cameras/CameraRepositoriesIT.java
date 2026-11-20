@@ -21,7 +21,9 @@ class CameraRepositoriesIT {
 
     @org.junit.jupiter.api.BeforeEach
     void empty() {
-        clips.deleteAll();
+        // In batch: a plain deleteAll() inside this test's transaction is flushed after the
+        // test's inserts (Hibernate runs inserts before deletes), so a leftover stem collides.
+        clips.deleteAllInBatch();
         tokens.deleteAll();
         alerts.deleteAll();
     }

@@ -65,6 +65,7 @@ class ClipServiceTest {
     @AfterEach
     void tearDown() {
         users.findByUsername("cameras").ifPresent(users::delete);
+        repo.deleteAll(); // leave no rows for other classes sharing the test database
     }
 
     void clip(String camera, String date, String time, String start, List<String> triggers) throws Exception {
@@ -235,5 +236,52 @@ class ClipServiceTest {
         assertThat(garage.clipCount()).isEqualTo(2);
         assertThat(garage.latestStart()).isEqualTo(OffsetDateTime.parse("2026-11-18T21:49:41+01:00"));
         assertThat(service.get(garage.latestClipId())).hasValueSatisfying(v -> assertThat(v.camera()).isEqualTo("Garage"));
+    }
+
+    @Test
+    void deleteManyDeletesSkipsKeptAndReportsUnknown() throws Exception {
+        fiveClips();
+        List<ClipView> all = service.list(all(10));
+        ClipView a = all.get(0), kept = all.get(1), b = all.get(2);
+        service.keep(kept.id(), true);
+        BulkDeleteResult r = service.deleteMany(List.of(a.id(), kept.id(), b.id(), 999999L, a.id()));
+        assertThat(r.deleted()).containsExactly(a.id(), b.id());
+        assertThat(r.skippedKept()).containsExactly(kept.id());
+        assertThat(r.notFound()).containsExactly(999999L);
+        assertThat(r.failed()).isEmpty();
+        assertThat(r.freedBytes()).isEqualTo(a.sizeBytes() + b.sizeBytes()).isPositive();
+        assertThat(root.resolve("Garage/2026-11-18/21-49-41.mp4")).doesNotExist();
+        assertThat(root.resolve("Living Room/2026-11-18/20-00-00.mp4")).doesNotExist();
+        assertThat(root.resolve("Garage/2026-11-18/21-45-49.mp4")).exists();
+        assertThat(service.get(a.id())).isEmpty();
+        assertThat(service.get(kept.id())).isPresent();
+    }
+
+    @Test
+    void bulkDeleteSkipsKeptByTheFileNotTheRow() throws Exception {
+        fiveClips();
+        ClipView c = service.list(all(1)).get(0);
+        files.setKept(repo.findById(c.id()).orElseThrow().getStem(), true); // kept elsewhere; row still says not kept
+        BulkDeleteResult r = service.deleteMany(List.of(c.id()));
+        assertThat(r.deleted()).isEmpty();
+        assertThat(r.skippedKept()).containsExactly(c.id());
+        assertThat(root.resolve("Garage/2026-11-18/21-49-41.mp4")).exists();
+    }
+
+    @Test
+    void deleteManyContinuesPastAFailedClip() throws Exception {
+        fiveClips();
+        List<Long> ids = service.list(all(10)).stream().map(ClipView::id).toList();
+        Path day = root.resolve("Backyard/2026-11-16");
+        Files.setPosixFilePermissions(day, java.nio.file.attribute.PosixFilePermissions.fromString("r-xr-xr-x"));
+        try {
+            BulkDeleteResult r = service.deleteMany(ids);
+            assertThat(r.failed()).containsExactly(ids.get(4));
+            assertThat(r.deleted()).containsExactlyElementsOf(ids.subList(0, 4));
+            assertThat(day.resolve("19-22-58.mp4")).exists();
+            assertThat(service.get(ids.get(4))).isPresent();
+        } finally {
+            Files.setPosixFilePermissions(day, java.nio.file.attribute.PosixFilePermissions.fromString("rwxr-xr-x"));
+        }
     }
 }

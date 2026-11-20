@@ -268,4 +268,46 @@ class CameraApiIT {
         }
         mvc.perform(get("/admin/cameras").with(admin)).andExpect(status().isOk());
     }
+
+    org.springframework.test.web.servlet.ResultActions bulk(String json, RequestPostProcessor... with) throws Exception {
+        var req = org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post("/api/cameras/clips/delete")
+                .contentType(org.springframework.http.MediaType.APPLICATION_JSON).content(json);
+        for (RequestPostProcessor w : with) req = req.with(w);
+        return mvc.perform(req);
+    }
+
+    @Test
+    void bulkDeleteReturnsOutcomes() throws Exception {
+        JsonNode clips = getJson("/api/cameras/clips?limit=2").get("clips");
+        long a = clips.get(1).get("id").asLong(), kept = clips.get(0).get("id").asLong();
+        mvc.perform(put("/api/cameras/clips/" + kept + "/keep").with(admin).with(csrf())).andExpect(status().isOk());
+        String body = bulk("{\"ids\":[" + a + "," + kept + ",424242]}", admin, csrf())
+                .andExpect(status().isOk()).andReturn().getResponse().getContentAsString();
+        JsonNode r = new tools.jackson.databind.ObjectMapper().readTree(body);
+        assertThat(r.get("deleted").toString()).isEqualTo("[" + a + "]");
+        assertThat(r.get("skippedKept").toString()).isEqualTo("[" + kept + "]");
+        assertThat(r.get("notFound").toString()).isEqualTo("[424242]");
+        assertThat(r.get("failed").toString()).isEqualTo("[]");
+        assertThat(r.get("freedBytes").asLong()).isPositive();
+        mvc.perform(get("/api/cameras/clips/" + a).with(admin)).andExpect(status().isNotFound());
+        mvc.perform(get("/api/cameras/clips/" + kept).with(admin)).andExpect(status().isOk());
+    }
+
+    @Test
+    void bulkDeleteValidates() throws Exception {
+        String tooMany = "{\"ids\":[" + String.join(",", java.util.stream.LongStream.rangeClosed(1, 501)
+                .mapToObj(Long::toString).toList()) + "]}";
+        for (String json : List.of("{\"ids\":[]}", tooMany, "{}", "{\"ids\":[\"x\"]}")) {
+            bulk(json, admin, csrf()).andExpect(status().isBadRequest());
+        }
+        assertThat(getJson("/api/cameras/clips?limit=50").get("clips").size()).isPositive();
+    }
+
+    @Test
+    void bulkDeleteNeedsCsrfAndAuth() throws Exception {
+        long id = newestId();
+        bulk("{\"ids\":[" + id + "]}", admin).andExpect(status().isForbidden());
+        bulk("{\"ids\":[" + id + "]}", csrf()).andExpect(status().isUnauthorized()); // CSRF is checked first
+        mvc.perform(get("/api/cameras/clips/" + id).with(admin)).andExpect(status().isOk());
+    }
 }

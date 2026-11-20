@@ -2,6 +2,8 @@ package com.davidneto.homepage.cameras;
 
 import com.davidneto.homepage.repository.WebDavUserRepository;
 import jakarta.persistence.criteria.Predicate;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Sort;
 import org.springframework.data.jpa.domain.Specification;
@@ -25,6 +27,8 @@ import java.util.stream.Stream;
 /** Everything the API, web page and apps do with clips. */
 @Service
 public class ClipService {
+    private static final Logger log = LoggerFactory.getLogger(ClipService.class);
+
 
     static final String WARN_VOLUME_MISSING = "camera volume missing";
     static final String WARN_VOLUME = "camera volume ";
@@ -91,6 +95,36 @@ public class ClipService {
         files.deleteClip(c.getStem());
         thumbnailer.delete(c.getStem());
         repo.delete(c);
+    }
+
+    /**
+     * Deletes exactly these clips, each through the same steps as {@link #delete(long)}. A clip
+     * whose .keep file is on the volume is skipped; one that fails on disk is reported and the
+     * rest continue. Duplicate ids count once.
+     */
+    public BulkDeleteResult deleteMany(java.util.Collection<Long> ids) {
+        List<Long> deleted = new ArrayList<>(), kept = new ArrayList<>(), missing = new ArrayList<>(),
+                failed = new ArrayList<>();
+        long freed = 0;
+        for (Long id : new java.util.LinkedHashSet<>(ids)) {
+            Optional<CameraClip> found = repo.findById(id);
+            if (found.isEmpty()) { missing.add(id); continue; }
+            CameraClip c = found.get();
+            try {
+                if (files.isKept(c.getStem())) { kept.add(id); continue; }
+                files.deleteClip(c.getStem());
+                thumbnailer.delete(c.getStem());
+                repo.delete(c);
+                deleted.add(id);
+                freed += c.getSizeBytes();
+            } catch (RuntimeException e) {
+                log.warn("bulk delete: clip {} failed: {}", id, e.toString());
+                failed.add(id);
+            }
+        }
+        log.info("bulk delete: {} deleted ({} bytes), {} kept skipped, {} not found, {} failed",
+                deleted.size(), freed, kept.size(), missing.size(), failed.size());
+        return new BulkDeleteResult(deleted, freed, kept, missing, failed);
     }
 
     public Path videoPath(long id) {
