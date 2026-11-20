@@ -19,10 +19,12 @@ public class CameraAlertsController {
 
     private final Notifier notifier;
     private final AlertMute mute;
+    private final java.time.Clock clock;
 
-    public CameraAlertsController(Notifier notifier, AlertMute mute) {
+    public CameraAlertsController(Notifier notifier, AlertMute mute, java.time.Clock clock) {
         this.notifier = notifier;
         this.mute = mute;
+        this.clock = clock;
     }
 
     /** "Send test alert" button: true when ntfy accepted it (sent even while alerts are muted). */
@@ -40,6 +42,14 @@ public class CameraAlertsController {
     @PutMapping("/mute")
     public AlertMute.MuteState setMute(@RequestBody MuteRequest body) {
         boolean muted = Boolean.TRUE.equals(body.muted());
-        return mute.set(muted, body.until() == null ? null : body.until().toInstant());
+        java.time.Instant until = body.until() == null ? null : body.until().toInstant();
+        if (muted && until != null) {
+            java.time.Instant now = clock.instant();
+            if (!until.isAfter(now) || until.isAfter(now.plus(java.time.Duration.ofDays(366)))) {
+                throw new org.springframework.web.server.ResponseStatusException(
+                        org.springframework.http.HttpStatus.BAD_REQUEST, "until must be in the next 12 months");
+            }
+        }
+        return mute.set(muted, until);
     }
 }

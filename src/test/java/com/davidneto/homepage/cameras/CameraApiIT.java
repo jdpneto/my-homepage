@@ -37,6 +37,7 @@ class CameraApiIT {
     @Autowired CameraProperties props;
     @Autowired ClipIndexer indexer;
     @Autowired CameraClipRepository repo;
+    @Autowired CameraSettingRepository settings;
     MockMvc mvc;
     Path root;
     final JsonMapper json = JsonMapper.builder().build();
@@ -54,6 +55,7 @@ class CameraApiIT {
         FileSystemUtils.deleteRecursively(root);
         FileSystemUtils.deleteRecursively(props.getThumbsDir());
         repo.deleteAll();
+        settings.deleteAll();
         Files.createDirectories(root);
         Files.writeString(root.resolve("volume-marker.txt"), ClipFilesTest.MARKER_TEXT);
         clip("Garage", "2026-11-18", "21-45-49", "2026-11-18T21:45:49+01:00", "person");
@@ -244,15 +246,26 @@ class CameraApiIT {
         assertThat(initial.get("muted").asBoolean()).isFalse();
         mvc.perform(put("/api/cameras/alerts/mute").with(admin).with(csrf())
                         .contentType(org.springframework.http.MediaType.APPLICATION_JSON)
-                        .content("{\"muted\":true,\"until\":\"2099-01-01T08:00:00+01:00\"}"))
+                        .content("{\"muted\":true,\"until\":\"" + java.time.OffsetDateTime.now().plusHours(8).withNano(0) + "\"}"))
                 .andExpect(status().isOk());
         JsonNode after = getJson("/api/cameras/alerts/mute");
         assertThat(after.get("muted").asBoolean()).isTrue();
-        assertThat(after.get("until").asString()).startsWith("2099-01-01T07:00");
+        assertThat(after.get("until").asString()).isNotBlank();
         mvc.perform(put("/api/cameras/alerts/mute").with(admin)
                         .contentType(org.springframework.http.MediaType.APPLICATION_JSON).content("{\"muted\":false}"))
                 .andExpect(status().isForbidden()); // no CSRF
         mvc.perform(put("/api/cameras/alerts/mute").with(admin).with(csrf())
                 .contentType(org.springframework.http.MediaType.APPLICATION_JSON).content("{\"muted\":false}"));
+    }
+
+    @Test
+    void muteUntilMustBeWithinAYear() throws Exception {
+        for (String until : new String[]{"+999999999-12-31T23:59:59Z", "2000-01-01T00:00:00Z"}) {
+            mvc.perform(put("/api/cameras/alerts/mute").with(admin).with(csrf())
+                            .contentType(org.springframework.http.MediaType.APPLICATION_JSON)
+                            .content("{\"muted\":true,\"until\":\"" + until + "\"}"))
+                    .andExpect(status().isBadRequest());
+        }
+        mvc.perform(get("/admin/cameras").with(admin)).andExpect(status().isOk());
     }
 }

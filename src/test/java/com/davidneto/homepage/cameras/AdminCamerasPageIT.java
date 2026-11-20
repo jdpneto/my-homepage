@@ -146,7 +146,7 @@ class AdminCamerasPageIT {
         assertThat(page("/admin/cameras")).contains("Alerts on");
         mute.set(true, null);
         assertThat(page("/admin/cameras")).contains("Alerts off");
-        mute.set(true, java.time.Instant.parse("2099-01-01T20:00:00Z"));
+        mute.set(true, java.time.Instant.now().plusSeconds(3600));
         assertThat(page("/admin/cameras")).contains("Alerts muted until");
     }
 
@@ -236,5 +236,21 @@ class AdminCamerasPageIT {
                 .with(org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.csrf()))
                 .andExpect(status().is3xxRedirection());
         mvc.perform(get("/admin/cameras").session(s)).andExpect(status().is3xxRedirection());
+    }
+
+    @Test
+    void plusInCameraNameIsEncodedInDataQuery() throws Exception {
+        clip("Cam+1", "2026-11-18", "21-45-49", "2026-11-18T21:45:49+01:00", "person");
+        indexer.reconcile();
+        assertThat(page("/admin/cameras?camera=Cam%2B1")).contains("data-query=\"camera=Cam%2B1\"");
+    }
+
+    @Test
+    void muteUntilIsRenderedAsIsoForTheBrowserAndInTheNewestClipsOffsetEvenWhenFiltered() throws Exception {
+        fourClips();
+        mute.set(true, java.time.Instant.parse("2099-01-01T20:00:00Z"));
+        String kept = page("/admin/cameras?kept=true"); // empty filter: must not fall back to UTC
+        assertThat(kept).contains("data-until=\"2099-01-01T20:00:00Z\"");
+        assertThat(kept).contains("Alerts muted until 21:00");
     }
 }

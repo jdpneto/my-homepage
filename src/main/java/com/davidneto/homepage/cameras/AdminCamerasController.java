@@ -6,7 +6,6 @@ import org.springframework.ui.Model;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
-import org.springframework.web.util.UriComponentsBuilder;
 
 import java.time.Clock;
 import java.time.Duration;
@@ -69,10 +68,14 @@ public class AdminCamerasController {
                 + size(status.unkeptBytes()) + " · Free " + size(free));
         model.addAttribute("storageLevel", level(status));
         model.addAttribute("healthText", health(status, now));
-        // Show times in the cameras' own offset (the server runs in UTC).
-        ZoneOffset localOffset = page.isEmpty() ? ZoneOffset.UTC : page.get(0).start().getOffset();
+        // Show times in the cameras' own offset (the server runs in UTC): the newest clip of any
+        // camera, never the filtered list (which can be empty or months old). The browser
+        // re-renders it in its own time zone from data-until anyway.
+        ZoneOffset localOffset = cameras.stream().map(CameraSummary::latestStart).filter(java.util.Objects::nonNull)
+                .max(java.util.Comparator.naturalOrder()).map(OffsetDateTime::getOffset).orElse(ZoneOffset.UTC);
         model.addAttribute("alertsText", alertsText(mute.get(), localOffset));
         model.addAttribute("alertsMuted", mute.get().muted());
+        model.addAttribute("alertsUntil", mute.get().until() == null ? null : mute.get().until().toString());
         return "admin/cameras";
     }
 
@@ -138,13 +141,17 @@ public class AdminCamerasController {
         return "Alerts muted until " + HM.format(m.until().atOffset(offset));
     }
 
+    /** Query string for the script's page requests; every value fully encoded ('+' too, which a server reads as a space). */
     private static String query(String camera, String trigger, Boolean kept) {
-        UriComponentsBuilder b = UriComponentsBuilder.newInstance();
-        if (camera != null) b.queryParam("camera", camera);
-        if (trigger != null) b.queryParam("trigger", trigger);
-        if (kept != null) b.queryParam("kept", kept);
-        String q = b.encode().build().getQuery();
-        return q == null ? "" : q;
+        List<String> parts = new ArrayList<>();
+        if (camera != null) parts.add("camera=" + enc(camera));
+        if (trigger != null) parts.add("trigger=" + enc(trigger));
+        if (kept != null) parts.add("kept=" + kept);
+        return String.join("&", parts);
+    }
+
+    private static String enc(String v) {
+        return java.net.URLEncoder.encode(v, java.nio.charset.StandardCharsets.UTF_8).replace("+", "%20");
     }
 
     private static String blankToNull(String s) {

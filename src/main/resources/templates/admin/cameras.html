@@ -26,7 +26,7 @@
              phone); the summary always shows the alerts state. -->
         <details class="cam-more">
             <summary>
-                <span id="alerts-state" th:text="${alertsText}" th:attr="data-muted=${alertsMuted}">Alerts on</span>
+                <span id="alerts-state" th:text="${alertsText}" th:attr="data-muted=${alertsMuted},data-until=${alertsUntil}">Alerts on</span>
                 <span class="cam-more-label">alerts &amp; devices</span>
             </summary>
             <div class="cam-controls">
