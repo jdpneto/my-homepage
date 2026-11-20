@@ -1,0 +1,110 @@
+<!DOCTYPE html>
+<html xmlns:th="http://www.thymeleaf.org" lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="robots" content="noindex,nofollow">
+    <meta name="csrf" th:content="${_csrf.token}">
+    <title>Admin — Cameras</title>
+    <link rel="stylesheet" th:href="@{/css/terminal.css}">
+    <link rel="stylesheet" th:href="@{/css/cameras.css}">
+    <script th:src="@{/js/cameras.js}" defer></script>
+</head>
+<body>
+<nav th:replace="~{admin/fragments :: admin-nav('cameras')}"></nav>
+<main class="cam-page">
+    <div id="banner" class="cam-banner" hidden></div>
+
+    <section id="storage" class="cam-storage" th:classappend="'level-' + ${storageLevel}">
+        <div class="cam-storage-line" th:text="${storageText}">Kept 1.2 GB · Last 30 days 2.1 GB · Free 9.8 GB</div>
+        <div class="cam-health" th:text="${healthText}">Uploader: last heartbeat 3 min ago · Hub OK</div>
+        <ul class="cam-warnings" th:if="${not #lists.isEmpty(status.warnings)}">
+            <li th:each="w : ${status.warnings}" th:text="${w}">camera quota 90% used</li>
+        </ul>
+        <div class="cam-controls">
+            <span id="alerts-state" th:text="${alertsText}" th:attr="data-muted=${alertsMuted}">Alerts on</span>
+            <button type="button" id="alerts-toggle" th:text="${alertsMuted} ? 'Turn alerts on' : 'Turn alerts off'">Turn alerts off</button>
+            <button type="button" id="alerts-mute-8h">Mute 8 h</button>
+            <button type="button" id="test-alert">Send test alert</button>
+            <button type="button" id="revoke-all">Sign out all app devices</button>
+        </div>
+    </section>
+
+    <section class="cam-cards" th:if="${not #lists.isEmpty(cameras)}">
+        <a class="camera-card" th:href="@{/admin/cameras}" th:attr="aria-current=${camera == null} ? 'true' : null">
+            <span class="camera-card-name">All cameras</span>
+        </a>
+        <a th:each="c : ${cameras}" class="camera-card"
+           th:href="@{/admin/cameras(camera=${c.name})}"
+           th:attr="aria-current=${c.name == camera} ? 'true' : null">
+            <img th:if="${c.latestClipId != null}" class="camera-card-thumb" loading="lazy" alt=""
+                 th:src="@{/api/cameras/clips/{id}/thumb(id=${c.latestClipId})}">
+            <span class="camera-card-name" th:text="${c.name}">Garage</span>
+            <span class="camera-card-meta">
+                <span th:text="${c.clipCount} + (${c.clipCount == 1} ? ' clip' : ' clips')">12 clips</span>
+                <span th:if="${c.latestStart != null}"
+                      th:text="' · last ' + ${lastClipAgo[c.name]}">· last 4 min ago</span>
+            </span>
+        </a>
+    </section>
+
+    <nav class="cam-filters">
+        <a th:href="@{/admin/cameras(camera=${camera})}" th:classappend="${trigger == null and kept == null} ? 'active'">All</a>
+        <a th:href="@{/admin/cameras(camera=${camera},trigger='person')}" th:classappend="${trigger == 'person'} ? 'active'">Person</a>
+        <a th:href="@{/admin/cameras(camera=${camera},trigger='motion')}" th:classappend="${trigger == 'motion'} ? 'active'">Motion</a>
+        <a th:href="@{/admin/cameras(camera=${camera},trigger='animal')}" th:classappend="${trigger == 'animal'} ? 'active'">Animal</a>
+        <a th:href="@{/admin/cameras(camera=${camera},kept=true)}" th:classappend="${kept == true} ? 'active'">★ Kept</a>
+    </nav>
+
+    <p class="cam-empty" th:if="${#lists.isEmpty(groups)}">No clips here yet.</p>
+
+    <div id="clips" th:data-next="${nextBefore}" th:data-query="${query}">
+        <th:block th:each="g : ${groups}">
+            <h3 class="day" th:text="${g.label}">Today</h3>
+            <ul class="clip-list">
+                <li class="clip" th:each="c : ${g.clips}"
+                    th:attr="data-id=${c.id},data-start=${c.start},data-camera=${c.camera},data-kept=${c.kept},data-triggers=${#strings.listJoin(c.triggers, ',')}"
+                    tabindex="0">
+                    <img class="thumb" loading="lazy" alt="" th:src="@{/api/cameras/clips/{id}/thumb(id=${c.id})}">
+                    <span class="clip-time" th:text="${#temporals.format(c.start, 'HH:mm:ss')}">21:49:41</span>
+                    <span class="clip-camera" th:text="${c.camera}">Garage</span>
+                    <span class="clip-triggers" th:text="${#strings.listJoin(c.triggers, ', ')}">person</span>
+                    <span class="clip-duration" th:text="${c.durationSeconds} + 's'">10s</span>
+                    <span class="clip-kept" th:text="${c.kept} ? '★' : '☆'" th:attr="aria-label=${c.kept} ? 'kept' : 'not kept'">☆</span>
+                </li>
+            </ul>
+        </th:block>
+    </div>
+    <div id="clips-sentinel" aria-hidden="true"></div>
+
+    <template id="clip-row">
+        <li class="clip" tabindex="0">
+            <img class="thumb" loading="lazy" alt="">
+            <span class="clip-time"></span>
+            <span class="clip-camera"></span>
+            <span class="clip-triggers"></span>
+            <span class="clip-duration"></span>
+            <span class="clip-kept"></span>
+        </li>
+    </template>
+
+    <div id="player" class="cam-player" hidden role="dialog" aria-modal="true" aria-label="Clip player">
+        <div class="player-top">
+            <span class="player-title"></span>
+            <button type="button" class="player-close" aria-label="Close">✕</button>
+        </div>
+        <video class="player-video" controls playsinline autoplay preload="metadata"></video>
+        <div class="player-message" hidden></div>
+        <div class="player-bar">
+            <button type="button" class="player-prev" aria-label="Previous clip">◀</button>
+            <button type="button" class="player-keep">☆ Keep</button>
+            <a class="player-download" download>Download</a>
+            <button type="button" class="player-delete">Delete</button>
+            <button type="button" class="player-next" aria-label="Next clip">▶</button>
+        </div>
+    </div>
+
+    <div id="toast" class="cam-toast" hidden role="status"></div>
+</main>
+</body>
+</html>

@@ -67,7 +67,7 @@ Added after David asked (2026-11-20) to switch notifications on/off and to see v
 
 - [ ] **Step 1: Write failing tests** (`@SpringBootTest @AutoConfigureMockMvc @ActiveProfiles("test")`, files under `app.cameras.root-dir` like `CameraApiIT`, `with(user("admin").roles("ADMIN"))`):
   - `pageRendersGroupsNewestFirst` — 3 clips on 18 Nov and 1 on 16 Nov → two `<h3>` day headings in that order, 4 `li.clip`, first row time `21:49:41`.
-  - `groupLabelsTodayYesterdayDate` — unit test of `group(...)` with now = 2026-11-18T22:00+01:00 → labels `Today`, `Yesterday`, `Sun 16 Nov`.
+  - `groupLabelsTodayYesterdayDate` — unit test of `group(...)` with now = 2026-11-18T22:00+01:00 → labels `Today`, `Yesterday`, `Mon 16 Nov`.
   - `filterLinksEncodeNames` — camera "Living Room" → link `href` contains `camera=Living%20Room`; `GET /admin/cameras?camera=Living%20Room` shows only that camera's rows.
   - `storagePanelShowsFormattedSizes` — status text contains `Kept`, `Last 30 days`, `Free` and a `GB`/`MB` value; heartbeat line contains `Uploader`.
   - `emptyStateMessage` — no clips → text `No clips` and no `li.clip`.
