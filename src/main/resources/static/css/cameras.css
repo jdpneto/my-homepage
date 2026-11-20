@@ -1,0 +1,942 @@
+/* === Camera browser (/admin/cameras) ===
+ * Loaded after terminal.css and only on the cameras page, so it reuses the
+ * terminal palette (--bg, --text, --accent, --border, --surface ...) and adds
+ * a few status colours of its own.
+ *
+ * State hooks the script may use (all optional, styling degrades gracefully):
+ *   li.clip[data-kept="true"]            kept star in accent colour
+ *   #clips[aria-busy="true"]             "loading…" under the list
+ *   .player-keep.on                      Keep button shown as active (clip kept)
+ *   .player-delete.confirm               second step of the delete confirm
+ *   button[aria-disabled="true"]         request in flight (not `disabled`: keeps focus)
+ *   .cam-toast:empty                     toast hidden (it stays in the a11y tree)
+ *   .cam-toast.error / .cam-banner.info  colour variants
+ */
+
+/* Read by screen readers, not shown (page h1, the player's live region). */
+.visually-hidden {
+    position: absolute !important;
+    width: 1px;
+    height: 1px;
+    padding: 0;
+    margin: -1px;
+    overflow: hidden;
+    clip: rect(0 0 0 0);
+    clip-path: inset(50%);
+    white-space: nowrap;
+    border: 0;
+}
+
+.cam-page {
+    --amber: #ffb000;
+    --red: #ff4d4d;
+    --red-bg: #2a0b0b;
+    --amber-bg: #2a2000;
+    --accent-dim: rgba(0, 255, 0, 0.1);
+    --tap: 44px; /* minimum touch target */
+
+    width: 100%;
+    max-width: 1200px;
+    margin: 0 auto;
+    padding: 24px 32px 48px;
+    flex: 1 0 auto;
+    min-width: 0;
+}
+
+/* Several rules below set `display`, which would beat the UA `[hidden]` rule. */
+.cam-page [hidden] {
+    display: none !important;
+}
+
+/* The admin nav (shared fragment, inline styles) never wraps; on a phone its
+ * seven links are wider than the screen. Let it wrap on this page so there is
+ * no horizontal page scroll. */
+body > .nav {
+    flex-wrap: wrap;
+    gap: 8px 16px;
+}
+
+body > .nav > div {
+    flex-wrap: wrap;
+    row-gap: 4px !important; /* the fragment sets `gap: 20px` inline */
+}
+
+/* Shared button look for the page: outlined, monospace, green. */
+.cam-controls button,
+.player-bar button,
+.player-bar a,
+.player-close {
+    font: inherit;
+    font-size: 13px;
+    color: var(--accent);
+    background: transparent;
+    border: 1px solid var(--border-light);
+    border-radius: 3px;
+    padding: 6px 14px;
+    min-height: 36px;
+    cursor: pointer;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+    white-space: nowrap;
+    text-decoration: none;
+    transition: background-color 0.15s, border-color 0.15s;
+    -webkit-tap-highlight-color: transparent;
+}
+
+/* Hover styles only where hover is real. Touch browsers keep :hover on the
+ * last element tapped, which would make e.g. an unkept Keep button look
+ * pressed. Each hover rule stays in its original place (so later state rules
+ * such as .active or .confirm still win) inside its own (hover: hover). */
+@media (hover: hover) {
+    .cam-controls button:hover,
+    .player-bar button:hover,
+    .player-bar a:hover,
+    .player-close:hover {
+        background: var(--accent-dim);
+        border-color: var(--accent);
+        text-decoration: none;
+    }
+}
+
+.cam-controls button:disabled,
+.player-bar button:disabled,
+.cam-controls button[aria-disabled="true"],
+.player-bar button[aria-disabled="true"] {
+    opacity: 0.4;
+    cursor: not-allowed;
+    background: transparent;
+    border-color: var(--border-light);
+}
+
+.cam-page :focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 2px;
+}
+
+/* === Banner (e.g. "Signed out — reload to sign in") === */
+.cam-banner {
+    position: sticky;
+    top: 0;
+    z-index: 50;
+    margin-bottom: 16px;
+    padding: 10px 14px;
+    background: var(--red-bg);
+    border: 1px solid var(--red);
+    border-radius: 4px;
+    color: var(--red);
+    font-weight: bold;
+    overflow-wrap: anywhere;
+}
+
+/* Decorative prefixes in this file use `content: "x" / ""` (empty alt text) so
+ * screen readers skip them; the plain declaration before it is the fallback
+ * for browsers without alt-text support. */
+.cam-banner::before {
+    content: "! ";
+    content: "! " / "";
+}
+
+/* While the player is open it covers the page (z-index 1000), so a sticky
+ * banner would be hidden: a 401 during Keep/Delete would look like nothing
+ * happened. Float the banner above the overlay, leaving the close button
+ * (top right, --tap wide) uncovered. */
+body:has(.cam-player:not([hidden])) .cam-banner {
+    position: fixed;
+    top: max(8px, env(safe-area-inset-top));
+    left: max(8px, env(safe-area-inset-left));
+    right: calc(max(8px, env(safe-area-inset-right)) + var(--tap) + 12px);
+    z-index: 1100;
+    margin: 0;
+    box-shadow: 0 4px 16px rgba(0, 0, 0, 0.6);
+}
+
+.cam-banner.info {
+    background: var(--surface);
+    border-color: var(--accent);
+    color: var(--accent);
+}
+
+/* === Storage / health panel === */
+.cam-storage {
+    border: 1px solid var(--border);
+    border-left: 3px solid var(--accent);
+    border-radius: 4px;
+    background: var(--surface);
+    padding: 12px 16px;
+    margin-bottom: 20px;
+    overflow-wrap: anywhere;
+}
+
+.cam-storage.level-amber {
+    border-left-color: var(--amber);
+}
+
+.cam-storage.level-red {
+    border-left-color: var(--red);
+}
+
+.cam-storage-line {
+    color: #fff;
+}
+
+.cam-storage-line::before {
+    content: "> ";
+    content: "> " / "";
+    color: var(--accent);
+}
+
+.cam-storage.level-amber .cam-storage-line::before {
+    color: var(--amber);
+}
+
+.cam-storage.level-red .cam-storage-line::before {
+    color: var(--red);
+}
+
+.cam-health {
+    color: var(--text-secondary);
+    font-size: 13px;
+    margin-top: 2px;
+}
+
+.cam-warnings {
+    list-style: none;
+    margin-top: 8px;
+    font-size: 13px;
+    color: var(--amber);
+}
+
+.cam-storage.level-red .cam-warnings {
+    color: var(--red);
+}
+
+.cam-warnings li::before {
+    content: "! ";
+    content: "! " / "";
+    font-weight: bold;
+}
+
+.cam-controls {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 8px;
+    margin-top: 12px;
+    padding-top: 12px;
+    border-top: 1px solid var(--border);
+}
+
+#alerts-state {
+    font-size: 13px;
+    color: var(--text);
+    margin-right: 8px;
+}
+
+/* Status dot: green when alerts are on, amber when off or muted. */
+#alerts-state::before {
+    content: "●";
+    content: "●" / "";
+    color: var(--accent);
+    margin-right: 6px;
+}
+
+#alerts-state[data-muted="true"]::before {
+    color: var(--amber);
+}
+
+#revoke-all {
+    color: var(--red);
+}
+
+@media (hover: hover) {
+    #revoke-all:hover {
+        background: var(--red-bg);
+        border-color: var(--red);
+    }
+}
+
+/* === Camera cards === */
+.cam-cards {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(170px, 1fr));
+    gap: 10px;
+    margin-bottom: 16px;
+}
+
+.camera-card {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    min-width: 0;
+    padding: 8px;
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    background: var(--surface);
+    color: var(--text);
+    transition: border-color 0.15s, background-color 0.15s;
+}
+
+@media (hover: hover) {
+    .camera-card:hover {
+        border-color: var(--border-light);
+        background: var(--surface-hover);
+        text-decoration: none;
+    }
+}
+
+.camera-card[aria-current="true"] {
+    border-color: var(--accent);
+    box-shadow: inset 0 0 0 1px var(--accent);
+}
+
+.camera-card-thumb,
+.camera-card:not(:has(.camera-card-thumb))::before {
+    display: block;
+    width: 100%;
+    aspect-ratio: 16 / 9;
+    border-radius: 2px;
+    background: var(--bg);
+    margin-bottom: 4px;
+}
+
+.camera-card-thumb {
+    object-fit: cover;
+}
+
+/* Cards without a thumbnail ("All cameras", or a camera with no clips yet)
+ * get a placeholder of the same size so the row stays aligned. The text is
+ * decoration (the meta line already says "0 clips"), hence the empty alt. */
+.camera-card:not(:has(.camera-card-thumb))::before {
+    content: "no clips";
+    content: "no clips" / "";
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border: 1px dashed var(--border-light);
+    color: var(--text-muted);
+    font-size: 12px;
+}
+
+.camera-card:first-child:not(:has(.camera-card-thumb))::before {
+    content: "*";
+    content: "*" / "";
+    font-size: 28px;
+    color: var(--accent);
+}
+
+.camera-card-name {
+    color: #fff;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.camera-card[aria-current="true"] .camera-card-name {
+    color: var(--accent);
+}
+
+/* Real information: --text-secondary (about 5.9:1 on --surface), not
+ * --text-muted (about 2.5:1), which this file keeps for decoration only. */
+.camera-card-meta {
+    color: var(--text-secondary);
+    font-size: 12px;
+    line-height: 1.4;
+}
+
+/* === Filters === */
+.cam-filters {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    margin-bottom: 20px;
+}
+
+.cam-filters a {
+    display: inline-flex;
+    align-items: center;
+    min-height: 32px;
+    padding: 4px 12px;
+    border: 1px solid var(--border-light);
+    border-radius: 3px;
+    color: var(--text-secondary);
+    font-size: 13px;
+}
+
+@media (hover: hover) {
+    .cam-filters a:hover {
+        color: #fff;
+        border-color: var(--text-muted);
+        text-decoration: none;
+    }
+}
+
+.cam-filters a.active {
+    color: var(--bg);
+    background: var(--accent);
+    border-color: var(--accent);
+    font-weight: bold;
+}
+
+/* === Empty state === */
+.cam-empty {
+    color: var(--text-secondary);
+    text-align: center;
+    padding: 40px 16px;
+    border: 1px dashed var(--border-light);
+    border-radius: 4px;
+}
+
+.cam-empty::before {
+    content: "$ ls clips/ → ";
+    content: "$ ls clips/ → " / "";
+    color: var(--text-muted);
+}
+
+/* === Day headings (sticky so you always know which day you're in) === */
+#clips h3.day {
+    position: sticky;
+    top: 0;
+    z-index: 5;
+    background: var(--bg);
+    color: var(--accent);
+    font-size: 14px;
+    font-weight: bold;
+    padding: 8px 0 6px;
+    margin: 12px 0 8px;
+    border-bottom: 1px solid var(--border);
+}
+
+#clips h3.day:first-child {
+    margin-top: 0;
+}
+
+#clips h3.day::before {
+    content: "## ";
+    content: "## " / "";
+    color: var(--text-muted);
+}
+
+/* === Clip list: cards on desktop === */
+.clip-list {
+    list-style: none;
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+    gap: 12px;
+    margin-bottom: 8px;
+}
+
+/* li.clip is the card; its content sits in button.clip-open (a real control
+ * for keyboards and screen readers), which carries the grid layout. */
+.clip {
+    min-width: 0;
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    background: var(--surface);
+    overflow: hidden;
+    transition: border-color 0.15s, background-color 0.15s;
+    -webkit-tap-highlight-color: transparent;
+    /* Keep a row (and its focus ring) clear of the sticky day heading when
+     * focus or row.scrollIntoView() brings it to the top of the viewport. */
+    scroll-margin-top: 48px;
+    scroll-margin-bottom: 8px;
+}
+
+/* The sticky "Signed out" banner covers even more of the top. */
+body:has(#banner:not([hidden])) .clip {
+    scroll-margin-top: 96px;
+}
+
+@media (hover: hover) {
+    .clip:hover {
+        border-color: var(--border-light);
+        background: var(--surface-hover);
+    }
+}
+
+.clip-open {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    grid-template-areas:
+        "thumb    thumb"
+        "time     kept"
+        "camera   duration"
+        "triggers triggers";
+    align-items: center;
+    column-gap: 8px;
+    width: 100%;
+    height: 100%;
+    min-width: 0;
+    margin: 0;
+    padding: 0 0 8px;
+    border: 0;
+    border-radius: 0;
+    background: none;
+    font: inherit;
+    color: inherit;
+    text-align: left;
+    cursor: pointer;
+    -webkit-tap-highlight-color: transparent;
+    /* Focus scrolls the button, not the li: same margins as the row. */
+    scroll-margin-top: inherit;
+    scroll-margin-bottom: inherit;
+}
+
+/* Ring inside the card: the li's overflow:hidden would clip one outside it. */
+.clip-open:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: -2px;
+}
+
+.clip:has(.clip-open:focus-visible) {
+    border-color: var(--accent);
+}
+
+.clip-open > :not(.thumb) {
+    padding: 0 10px;
+    min-width: 0;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.clip .thumb {
+    grid-area: thumb;
+    display: block;
+    width: 100%;
+    aspect-ratio: 16 / 9;
+    object-fit: cover;
+    background: var(--bg);
+    margin-bottom: 6px;
+}
+
+.clip-time {
+    grid-area: time;
+    color: #fff;
+    font-weight: bold;
+}
+
+.clip-camera {
+    grid-area: camera;
+    color: var(--text-secondary);
+    font-size: 13px;
+}
+
+.clip-triggers {
+    grid-area: triggers;
+    color: var(--text-secondary);
+    font-size: 12px;
+}
+
+/* People are the interesting events: highlight them. */
+.clip[data-triggers*="person"] .clip-triggers {
+    color: var(--amber);
+}
+
+.clip-duration {
+    grid-area: duration;
+    justify-self: end;
+    color: var(--text-secondary);
+    font-size: 12px;
+}
+
+.clip-kept {
+    grid-area: kept;
+    justify-self: end;
+    color: var(--text-secondary);
+    font-size: 18px;
+    line-height: 1;
+}
+
+.clip[data-kept="true"] .clip-kept {
+    color: var(--accent);
+}
+
+/* Infinite-scroll sentinel; shows a hint while the next page loads. */
+#clips-sentinel {
+    min-height: 1px;
+    text-align: center;
+    color: var(--text-secondary);
+    font-size: 13px;
+}
+
+#clips[aria-busy="true"] + #clips-sentinel::after {
+    content: "loading…";
+    display: block;
+    padding: 12px 0;
+}
+
+/* === Player overlay === */
+.cam-player {
+    position: fixed;
+    inset: 0;
+    z-index: 1000;
+    display: flex;
+    flex-direction: column;
+    background: #000;
+    color: var(--text);
+    padding:
+        max(8px, env(safe-area-inset-top))
+        max(8px, env(safe-area-inset-right))
+        max(8px, env(safe-area-inset-bottom))
+        max(8px, env(safe-area-inset-left));
+    overflow-y: auto; /* safety net on very short screens */
+    overscroll-behavior: contain;
+    /* Horizontal swipes go to the script (next/prev), not to page panning. */
+    touch-action: pan-y pinch-zoom;
+}
+
+/* Stop the page behind the overlay from scrolling. */
+html:has(.cam-player:not([hidden])),
+body:has(.cam-player:not([hidden])) {
+    overflow: hidden;
+}
+
+.player-top {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    min-height: var(--tap);
+    padding: 0 4px 8px;
+}
+
+.player-title {
+    flex: 1;
+    min-width: 0;
+    color: #fff;
+    font-size: 14px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.player-close {
+    flex: none;
+    width: var(--tap);
+    height: var(--tap);
+    padding: 0;
+    font-size: 18px;
+    color: var(--text);
+}
+
+.player-video {
+    display: block;
+    width: 100%;
+    max-height: 75vh;
+    max-height: 75dvh;
+    min-height: 0;
+    margin: auto 0; /* centre vertically between the top and bottom bars */
+    object-fit: contain;
+    background: #000;
+}
+
+.player-message {
+    margin: 8px auto;
+    max-width: 640px;
+    padding: 10px 14px;
+    border: 1px solid var(--amber);
+    border-radius: 4px;
+    background: var(--amber-bg);
+    color: var(--amber);
+    text-align: center;
+    font-size: 14px;
+    overflow-wrap: anywhere;
+}
+
+.player-bar {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: center;
+    gap: 8px;
+    padding-top: 8px;
+}
+
+.player-bar button,
+.player-bar a {
+    min-height: var(--tap);
+    min-width: var(--tap);
+    font-size: 14px;
+}
+
+.player-bar .player-prev,
+.player-bar .player-next {
+    font-size: 16px;
+    padding: 0 16px;
+}
+
+.player-keep.on {
+    background: var(--accent-dim);
+    border-color: var(--accent);
+}
+
+.player-bar .player-delete {
+    color: var(--red);
+}
+
+@media (hover: hover) {
+    .player-bar .player-delete:hover {
+        background: var(--red-bg);
+        border-color: var(--red);
+    }
+}
+
+/* Second step of the two-step delete ("Yes, delete"). Dark text on the red
+ * fill (about 6:1); white on this red would only be about 3.3:1. */
+.player-bar .player-delete.confirm,
+.player-bar .player-delete[data-confirm] {
+    color: var(--bg);
+    background: var(--red);
+    border-color: var(--red);
+    font-weight: bold;
+}
+
+/* === Toast === */
+.cam-toast {
+    position: fixed;
+    left: 50%;
+    bottom: max(24px, calc(env(safe-area-inset-bottom) + 16px));
+    transform: translateX(-50%);
+    z-index: 1100; /* above the player: errors can happen while it is open */
+    max-width: calc(100vw - 32px);
+    width: max-content;
+    padding: 10px 16px;
+    background: var(--surface);
+    border: 1px solid var(--accent);
+    border-radius: 4px;
+    color: var(--accent);
+    font-size: 14px;
+    text-align: center;
+    overflow-wrap: anywhere;
+    box-shadow: 0 4px 16px rgba(0, 0, 0, 0.6);
+    pointer-events: none;
+    animation: cam-toast-in 0.2s ease-out;
+}
+
+.cam-toast.error {
+    border-color: var(--red);
+    color: var(--red);
+}
+
+/* Empty = hidden, but still rendered so the live region stays in the
+ * accessibility tree. The animation restarts when the text arrives. */
+.cam-toast:empty {
+    opacity: 0;
+    padding: 0;
+    border-width: 0;
+    box-shadow: none;
+    animation: none;
+}
+
+/* While the player is open the bottom is its control bar: show toasts on top. */
+body:has(.cam-player:not([hidden])) .cam-toast {
+    bottom: auto;
+    top: max(64px, calc(env(safe-area-inset-top) + 56px));
+}
+
+@keyframes cam-toast-in {
+    from {
+        opacity: 0;
+        translate: 0 8px;
+    }
+}
+
+/* === Tablets / small laptops === */
+@media (max-width: 768px) {
+    .cam-page {
+        padding: 16px 16px 40px;
+    }
+}
+
+/* === Touch targets ===
+ * Sized by input device, not width: a landscape phone or a tablet is wider
+ * than 600px but still tapped with a finger. Narrow windows are included too
+ * in case a touch device does not report a coarse pointer. (The player
+ * buttons are already --tap high everywhere.) */
+@media (any-pointer: coarse), (max-width: 600px) {
+    .cam-controls button,
+    .cam-filters a {
+        min-height: var(--tap);
+    }
+
+    /* Admin nav (restyled at the top of this file): its plain text links are
+     * ~24px high and stacked 4px apart once wrapped. */
+    body > .nav > div > a,
+    body > .nav > a {
+        display: inline-flex;
+        align-items: center;
+        min-height: 44px; /* = --tap, which is defined on .cam-page, not here */
+    }
+
+    body > .nav,
+    body > .nav > div {
+        row-gap: 0 !important;
+    }
+}
+
+/* === Phones: compact rows, scrollable camera strip === */
+@media (max-width: 600px) {
+    /* Admin nav: with 44px links, the link group and "logout" each starting
+     * their own rows would make the nav ~200px tall. Flatten the group so the
+     * prompt, links and logout share one wrapping flow (3 rows at 375px), and
+     * drop the vertical padding the links now provide themselves. */
+    body > .nav {
+        justify-content: flex-start;
+        column-gap: 16px;
+        padding-top: 4px;
+        padding-bottom: 4px;
+    }
+
+    body > .nav > div {
+        display: contents !important; /* the fragment sets `display: flex` inline */
+    }
+
+    /* Two buttons per row (2 rows of 44px instead of 4); the status text
+     * takes a row of its own. Long labels wrap inside their button. */
+    .cam-controls {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+    }
+
+    .cam-controls button {
+        padding: 4px 8px;
+        white-space: normal;
+        line-height: 1.2;
+        text-align: center;
+    }
+
+    #alerts-state {
+        grid-column: 1 / -1;
+        margin-right: 0;
+    }
+
+    /* Camera cards become one swipeable row instead of wrapping. */
+    .cam-cards {
+        display: flex;
+        overflow-x: auto;
+        overscroll-behavior-x: contain;
+        scroll-snap-type: x proximity;
+        scrollbar-width: none;
+        padding-bottom: 4px;
+    }
+
+    .cam-cards::-webkit-scrollbar {
+        display: none;
+    }
+
+    .camera-card {
+        flex: 0 0 140px;
+        scroll-snap-align: start;
+    }
+
+    /* All five chips share one row at 375px. flex-basis 0 with the default
+     * min-width:auto means a chip never shrinks below its label, so on a
+     * very narrow screen (320px) the row wraps instead of overflowing. */
+    .cam-filters a {
+        flex: 1 1 0;
+        padding: 0 8px;
+        justify-content: center;
+        white-space: nowrap;
+    }
+
+    /* The title is the only place the player shows the date and triggers:
+     * allow two lines (still fits the --tap-high top bar). */
+    .player-title {
+        white-space: normal;
+        display: -webkit-box;
+        -webkit-box-orient: vertical;
+        -webkit-line-clamp: 2;
+        line-clamp: 2;
+        line-height: 1.3;
+    }
+
+    /* Clips: full-width rows (thumbnail left, details right). */
+    .clip-list {
+        grid-template-columns: minmax(0, 1fr);
+        gap: 0;
+        border: 1px solid var(--border);
+        border-radius: 4px;
+        overflow: hidden;
+    }
+
+    .clip {
+        border: 0;
+        border-bottom: 1px solid var(--border);
+        border-radius: 0;
+    }
+
+    .clip-open {
+        grid-template-columns: 112px minmax(0, 1fr) auto;
+        grid-template-areas:
+            "thumb time     kept"
+            "thumb camera   duration"
+            "thumb triggers triggers";
+        column-gap: 10px;
+        row-gap: 0;
+        padding: 6px 10px 6px 6px;
+        line-height: 1.35;
+    }
+
+    .clip:last-child {
+        border-bottom: 0;
+    }
+
+    .clip-open > :not(.thumb) {
+        padding: 0;
+    }
+
+    .clip .thumb {
+        width: 112px;
+        margin: 0;
+        border-radius: 2px;
+    }
+
+    /* One row on a 375 px screen: prev | keep | download | delete | next.
+     * Labels may wrap to two lines ("Yes, / delete") rather than overflow. */
+    .player-bar {
+        display: grid;
+        grid-template-columns: var(--tap) repeat(3, minmax(0, 1fr)) var(--tap);
+        gap: 6px;
+    }
+
+    .player-bar button,
+    .player-bar a {
+        min-width: 0;
+        padding: 0 4px;
+        font-size: 13px;
+        line-height: 1.15;
+        white-space: normal;
+        text-align: center;
+    }
+
+    .player-bar .player-prev,
+    .player-bar .player-next {
+        padding: 0;
+    }
+}
+
+/* Landscape phones: give the video the room the bars do not need. */
+@media (max-height: 500px) and (orientation: landscape) {
+    .player-video {
+        max-height: 60vh;
+        max-height: 60dvh;
+    }
+
+    .player-top {
+        padding-bottom: 4px;
+    }
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .cam-page *,
+    .cam-page *::before,
+    .cam-page *::after {
+        animation: none !important;
+        transition: none !important;
+        scroll-behavior: auto !important;
+    }
+
+    .cam-cards {
+        scroll-snap-type: none;
+    }
+}

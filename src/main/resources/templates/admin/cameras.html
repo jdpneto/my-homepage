@@ -13,6 +13,7 @@
 <body>
 <nav th:replace="~{admin/fragments :: admin-nav('cameras')}"></nav>
 <main class="cam-page">
+    <h1 class="visually-hidden">Cameras</h1>
     <div id="banner" class="cam-banner" hidden></div>
 
     <section id="storage" class="cam-storage" th:classappend="'level-' + ${storageLevel}">
@@ -48,12 +49,17 @@
         </a>
     </section>
 
-    <nav class="cam-filters">
-        <a th:href="@{/admin/cameras(camera=${camera})}" th:classappend="${trigger == null and kept == null} ? 'active'">All</a>
-        <a th:href="@{/admin/cameras(camera=${camera},trigger='person')}" th:classappend="${trigger == 'person'} ? 'active'">Person</a>
-        <a th:href="@{/admin/cameras(camera=${camera},trigger='motion')}" th:classappend="${trigger == 'motion'} ? 'active'">Motion</a>
-        <a th:href="@{/admin/cameras(camera=${camera},trigger='animal')}" th:classappend="${trigger == 'animal'} ? 'active'">Animal</a>
-        <a th:href="@{/admin/cameras(camera=${camera},kept=true)}" th:classappend="${kept == true} ? 'active'">★ Kept</a>
+    <nav class="cam-filters" aria-label="Clip filters">
+        <a th:href="@{/admin/cameras(camera=${camera})}" th:classappend="${trigger == null and kept == null} ? 'active'"
+           th:attr="aria-current=${trigger == null and kept == null} ? 'true' : null">All</a>
+        <a th:href="@{/admin/cameras(camera=${camera},trigger='person')}" th:classappend="${trigger == 'person'} ? 'active'"
+           th:attr="aria-current=${trigger == 'person'} ? 'true' : null">Person</a>
+        <a th:href="@{/admin/cameras(camera=${camera},trigger='motion')}" th:classappend="${trigger == 'motion'} ? 'active'"
+           th:attr="aria-current=${trigger == 'motion'} ? 'true' : null">Motion</a>
+        <a th:href="@{/admin/cameras(camera=${camera},trigger='animal')}" th:classappend="${trigger == 'animal'} ? 'active'"
+           th:attr="aria-current=${trigger == 'animal'} ? 'true' : null">Animal</a>
+        <a th:href="@{/admin/cameras(camera=${camera},kept=true)}" th:classappend="${kept == true} ? 'active'"
+           th:attr="aria-current=${kept == true} ? 'true' : null">★ Kept</a>
     </nav>
 
     <p class="cam-empty" th:if="${#lists.isEmpty(groups)}">No clips here yet.</p>
@@ -63,14 +69,15 @@
             <h3 class="day" th:text="${g.label}">Today</h3>
             <ul class="clip-list">
                 <li class="clip" th:each="c : ${g.clips}"
-                    th:attr="data-id=${c.id},data-start=${c.start},data-camera=${c.camera},data-kept=${c.kept},data-triggers=${#strings.listJoin(c.triggers, ',')}"
-                    tabindex="0">
-                    <img class="thumb" loading="lazy" alt="" th:src="@{/api/cameras/clips/{id}/thumb(id=${c.id})}">
-                    <span class="clip-time" th:text="${#temporals.format(c.start, 'HH:mm:ss')}">21:49:41</span>
-                    <span class="clip-camera" th:text="${c.camera}">Garage</span>
-                    <span class="clip-triggers" th:text="${#strings.listJoin(c.triggers, ', ')}">person</span>
-                    <span class="clip-duration" th:text="${c.durationSeconds} + 's'">10s</span>
-                    <span class="clip-kept" th:text="${c.kept} ? '★' : '☆'" th:attr="aria-label=${c.kept} ? 'kept' : 'not kept'">☆</span>
+                    th:attr="data-id=${c.id},data-start=${c.start},data-camera=${c.camera},data-kept=${c.kept},data-triggers=${#strings.listJoin(c.triggers, ',')}">
+                    <button type="button" class="clip-open" aria-haspopup="dialog">
+                        <img class="thumb" loading="lazy" alt="" th:src="@{/api/cameras/clips/{id}/thumb(id=${c.id})}">
+                        <span class="clip-time" th:text="${#temporals.format(c.start, 'HH:mm:ss')}">21:49:41</span>
+                        <span class="clip-camera" th:text="${c.camera}">Garage</span>
+                        <span class="clip-triggers" th:text="${#strings.listJoin(c.triggers, ', ')}">person</span>
+                        <span class="clip-duration" th:text="${c.durationSeconds} + 's'">10s</span>
+                        <span class="clip-kept" role="img" th:text="${c.kept} ? '★' : '☆'" th:attr="aria-label=${c.kept} ? 'kept' : 'not kept'">☆</span>
+                    </button>
                 </li>
             </ul>
         </th:block>
@@ -78,19 +85,22 @@
     <div id="clips-sentinel" aria-hidden="true"></div>
 
     <template id="clip-row">
-        <li class="clip" tabindex="0">
-            <img class="thumb" loading="lazy" alt="">
-            <span class="clip-time"></span>
-            <span class="clip-camera"></span>
-            <span class="clip-triggers"></span>
-            <span class="clip-duration"></span>
-            <span class="clip-kept"></span>
+        <li class="clip">
+            <button type="button" class="clip-open" aria-haspopup="dialog">
+                <img class="thumb" loading="lazy" alt="">
+                <span class="clip-time"></span>
+                <span class="clip-camera"></span>
+                <span class="clip-triggers"></span>
+                <span class="clip-duration"></span>
+                <span class="clip-kept" role="img"></span>
+            </button>
         </li>
     </template>
 
-    <div id="player" class="cam-player" hidden role="dialog" aria-modal="true" aria-label="Clip player">
+    <div id="player" class="cam-player" hidden role="dialog" aria-modal="true" aria-label="Clip player"
+         aria-describedby="player-title">
         <div class="player-top">
-            <span class="player-title"></span>
+            <span class="player-title" id="player-title"></span>
             <button type="button" class="player-close" aria-label="Close">✕</button>
         </div>
         <video class="player-video" controls playsinline autoplay preload="metadata"></video>
@@ -102,6 +112,7 @@
             <button type="button" class="player-delete">Delete</button>
             <button type="button" class="player-next" aria-label="Next clip">▶</button>
         </div>
+        <p class="player-live visually-hidden" role="status"></p>
     </div>
 
     <div id="toast" class="cam-toast" hidden role="status"></div>

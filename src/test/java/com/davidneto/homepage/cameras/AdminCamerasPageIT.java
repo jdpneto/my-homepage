@@ -181,4 +181,12 @@ class AdminCamerasPageIT {
                 .contains("id=\"test-alert\"").contains("id=\"alerts-toggle\"").contains("id=\"alerts-mute-8h\"")
                 .contains("data-kept=").contains("data-start=").contains("/js/cameras.js").contains("/css/cameras.css");
     }
+
+    @Test
+    void staticAssetsServed() throws Exception {
+        String js = mvc.perform(get("/js/cameras.js")).andExpect(status().isOk()).andReturn().getResponse().getContentAsString();
+        assertThat(js).contains("X-XSRF-TOKEN").contains("IntersectionObserver").contains("/api/cameras/");
+        assertThat(js).doesNotContain("innerHTML ="); // names and triggers go in as text, never HTML
+        mvc.perform(get("/css/cameras.css")).andExpect(status().isOk());
+    }
 }
