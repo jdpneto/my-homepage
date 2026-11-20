@@ -115,6 +115,11 @@ Single user: David. He is not distributing the apps; he installs them on his own
 └──────────────────────────────────────────────────────────────────────────────┘
 ```
 
+### Phase 3b — Additions requested 2026-11-20
+- **Alerts on/off** (David): a switch on the web page (and later the app) plus "Mute for 8 h". While muted nothing is pushed but problems stay tracked; anything still wrong is announced once alerts are back on; problems that started and cleared while muted stay silent.
+- **Videos per camera** (David): a row of camera cards (latest thumbnail, clip count, last clip time) that opens that camera's clips.
+- **Camera modes** (David: "changing the predefined modes is enough"): switch the hub's predefined modes remotely through a command the server stores and the Mac mini applies on its next check. Separate project after the web page; needs its own design (it relaxes the uploader's read-only rule for exactly this one setting).
+
 ### Phase 4 — Flutter apps (iPhone + Android)
 - New `camera-app/` directory in this repo; one Flutter project; bundle/application id `eu.davidneto.cameras` (my call).
 - Screens: **Sign in** (server URL prefilled `https://davidneto.eu`, admin username/password → token in Keychain/Keystore); **Clips** (same filters and day grouping as the web, infinite scroll, pull to refresh, cached thumbnails); **Player** (full-screen native player, swipe left/right for next/previous, Keep/Unkeep, Save to phone, Share, Delete with confirm); **Storage** (the disk view and newest clip per camera); **Settings** (Face ID / fingerprint lock on open, sign out).
