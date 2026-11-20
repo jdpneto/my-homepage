@@ -310,4 +310,12 @@ class CameraApiIT {
         bulk("{\"ids\":[" + id + "]}", csrf()).andExpect(status().isUnauthorized()); // CSRF is checked first
         mvc.perform(get("/api/cameras/clips/" + id).with(admin)).andExpect(status().isOk());
     }
+
+    @Test
+    void bulkDeleteIs503WhileTheVolumeIsMissing() throws Exception {
+        long id = newestId();
+        Files.delete(root.resolve("volume-marker.txt"));
+        bulk("{\"ids\":[" + id + "]}", admin, csrf()).andExpect(status().isServiceUnavailable());
+        mvc.perform(get("/api/cameras/clips/" + id).with(admin)).andExpect(status().isOk());
+    }
 }

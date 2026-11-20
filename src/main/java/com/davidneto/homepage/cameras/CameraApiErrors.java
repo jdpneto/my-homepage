@@ -24,4 +24,9 @@ public class CameraApiErrors {
     public ResponseEntity<Map<String, String>> kept(ClipKeptException e) {
         return ResponseEntity.status(HttpStatus.CONFLICT).body(Map.of("error", e.getMessage()));
     }
+
+    @ExceptionHandler(VolumeUnavailableException.class)
+    public ResponseEntity<Map<String, String>> volume(VolumeUnavailableException e) {
+        return ResponseEntity.status(HttpStatus.SERVICE_UNAVAILABLE).body(Map.of("error", e.getMessage()));
+    }
 }

@@ -284,4 +284,14 @@ class ClipServiceTest {
             Files.setPosixFilePermissions(day, java.nio.file.attribute.PosixFilePermissions.fromString("rwxr-xr-x"));
         }
     }
+
+    @Test
+    void deletesAreRefusedWhileTheVolumeIsMissing() throws Exception {
+        fiveClips();
+        List<Long> ids = service.list(all(10)).stream().map(ClipView::id).toList();
+        Files.delete(root.resolve("volume-marker.txt")); // what an empty mount point looks like
+        assertThrows(VolumeUnavailableException.class, () -> service.deleteMany(ids));
+        assertThrows(VolumeUnavailableException.class, () -> service.delete(ids.get(0)));
+        assertThat(service.list(all(10))).hasSize(5);
+    }
 }

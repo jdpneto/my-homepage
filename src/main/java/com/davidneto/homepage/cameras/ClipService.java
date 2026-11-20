@@ -90,6 +90,7 @@ public class ClipService {
     }
 
     public void delete(long id) {
+        requireVolume();
         CameraClip c = require(id);
         if (files.isKept(c.getStem())) throw new ClipKeptException();
         files.deleteClip(c.getStem());
@@ -103,6 +104,7 @@ public class ClipService {
      * rest continue. Duplicate ids count once.
      */
     public BulkDeleteResult deleteMany(java.util.Collection<Long> ids) {
+        requireVolume();
         List<Long> deleted = new ArrayList<>(), kept = new ArrayList<>(), missing = new ArrayList<>(),
                 failed = new ArrayList<>();
         long freed = 0;
@@ -125,6 +127,11 @@ public class ClipService {
         log.info("bulk delete: {} deleted ({} bytes), {} kept skipped, {} not found, {} failed",
                 deleted.size(), freed, kept.size(), missing.size(), failed.size());
         return new BulkDeleteResult(deleted, freed, kept, missing, failed);
+    }
+
+    /** With the volume detached, a delete would remove rows but no files, and the clips would come back. */
+    private void requireVolume() {
+        if (!files.volumeOk()) throw new VolumeUnavailableException();
     }
 
     public Path videoPath(long id) {
