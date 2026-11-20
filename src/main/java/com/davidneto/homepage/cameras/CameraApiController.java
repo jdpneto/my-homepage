@@ -110,8 +110,8 @@ public class CameraApiController {
     }
 
     @GetMapping("/cameras")
-    public List<CameraInfo> cameras() {
-        return clips.cameras();
+    public List<CameraSummary> cameras() {
+        return clips.cameraSummaries();
     }
 
     @GetMapping("/status")

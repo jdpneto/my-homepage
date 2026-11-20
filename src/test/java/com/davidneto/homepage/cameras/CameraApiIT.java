@@ -199,6 +199,9 @@ class CameraApiIT {
         JsonNode cams = getJson("/api/cameras/cameras");
         assertThat(cams.get(0).get("name").asString()).isEqualTo("Garage");
         assertThat(cams.get(0).get("cameraId").asString()).isEqualTo("id");
+        assertThat(cams.get(0).get("clipCount").asLong()).isEqualTo(2);
+        assertThat(cams.get(0).get("latestStart").asString()).isEqualTo("2026-11-18T21:49:41+01:00");
+        assertThat(cams.get(0).get("latestClipId").asLong()).isEqualTo(newestId());
         assertThat(cams.get(1).get("name").asString()).isEqualTo("Living Room");
     }
 
@@ -233,5 +236,23 @@ class CameraApiIT {
     @Test
     void malformedCursorIs400() throws Exception {
         mvc.perform(get("/api/cameras/clips?before=abc").with(admin)).andExpect(status().isBadRequest());
+    }
+
+    @Test
+    void muteEndpointRoundTrip() throws Exception {
+        JsonNode initial = getJson("/api/cameras/alerts/mute");
+        assertThat(initial.get("muted").asBoolean()).isFalse();
+        mvc.perform(put("/api/cameras/alerts/mute").with(admin).with(csrf())
+                        .contentType(org.springframework.http.MediaType.APPLICATION_JSON)
+                        .content("{\"muted\":true,\"until\":\"2099-01-01T08:00:00+01:00\"}"))
+                .andExpect(status().isOk());
+        JsonNode after = getJson("/api/cameras/alerts/mute");
+        assertThat(after.get("muted").asBoolean()).isTrue();
+        assertThat(after.get("until").asString()).startsWith("2099-01-01T07:00");
+        mvc.perform(put("/api/cameras/alerts/mute").with(admin)
+                        .contentType(org.springframework.http.MediaType.APPLICATION_JSON).content("{\"muted\":false}"))
+                .andExpect(status().isForbidden()); // no CSRF
+        mvc.perform(put("/api/cameras/alerts/mute").with(admin).with(csrf())
+                .contentType(org.springframework.http.MediaType.APPLICATION_JSON).content("{\"muted\":false}"));
     }
 }

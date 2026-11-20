@@ -16,6 +16,9 @@ public interface CameraClipRepository extends JpaRepository<CameraClip, Long>, J
             + "from CameraClip c group by c.cameraName order by c.cameraName")
     List<CameraInfo> findCameras();
 
+    @Query("select c.cameraName, count(c) from CameraClip c group by c.cameraName")
+    List<Object[]> countPerCamera();
+
     @Query("select coalesce(sum(c.sizeBytes), 0) from CameraClip c where c.kept = :kept")
     long sumSizeByKept(boolean kept);
 

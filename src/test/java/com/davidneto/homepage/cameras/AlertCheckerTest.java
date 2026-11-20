@@ -41,6 +41,8 @@ class AlertCheckerTest {
     @Autowired CameraClipRepository clips;
     @Autowired AlertStateRepository states;
     @Autowired WebDavUserRepository users;
+    @Autowired CameraSettingRepository settings;
+    AlertMute mute;
     @TempDir Path tmp;
     Path root;
     MutableClock clock;
@@ -57,6 +59,7 @@ class AlertCheckerTest {
     void setUp() throws Exception {
         clips.deleteAll();
         states.deleteAll();
+        settings.deleteAll();
         root = tmp.resolve("cameras");
         Files.createDirectories(root);
         Files.writeString(root.resolve("volume-marker.txt"), ClipFilesTest.MARKER_TEXT);
@@ -90,7 +93,8 @@ class AlertCheckerTest {
             sent.add(new Sent(title, message, priority));
             return true;
         };
-        checker = new AlertChecker(service, files, retention, states, notifier, props, clock);
+        mute = new AlertMute(settings, clock);
+        checker = new AlertChecker(service, files, retention, states, notifier, props, clock, mute);
         heartbeat(clock.instant(), true, null);
     }
 
@@ -208,7 +212,7 @@ class AlertCheckerTest {
         checker.check();
         // a fresh checker (app restart) must not re-send the same alert
         AlertChecker again = new AlertChecker(service, files, retention, states,
-                (t, m, p) -> { sent.add(new Sent(t, m, p)); return true; }, props, clock);
+                (t, m, p) -> { sent.add(new Sent(t, m, p)); return true; }, props, clock, mute);
         again.check();
         assertThat(sent).hasSize(1);
     }
@@ -221,7 +225,7 @@ class AlertCheckerTest {
         checker = new AlertChecker(service, files, retention, states, (t, m, p) -> {
             if (up[0]) sent.add(new Sent(t, m, p));
             return up[0];
-        }, props, clock);
+        }, props, clock, mute);
         clock.advance(Duration.ofMinutes(61));
         checker.check();                 // ntfy down: nothing delivered
         assertThat(sent).isEmpty();
@@ -237,7 +241,7 @@ class AlertCheckerTest {
         checker = new AlertChecker(service, files, retention, states, (t, m, p) -> {
             if (up[0]) sent.add(new Sent(t, m, p));
             return up[0];
-        }, props, clock);
+        }, props, clock, mute);
         clock.advance(Duration.ofMinutes(61));
         checker.check();
         heartbeat(clock.instant(), true, null);
@@ -256,7 +260,7 @@ class AlertCheckerTest {
         RetentionJob fresh = new RetentionJob(files, clips, new ClipThumbnailer(props, files, (m, j) -> { }),
                 new ClipIndexer(files, new ClipThumbnailer(props, files, (m, j) -> { }), clips, clock), props, clock);
         AlertChecker again = new AlertChecker(service, files, fresh, states,
-                (t, m, p) -> { sent.add(new Sent(t, m, p)); return true; }, props, clock);
+                (t, m, p) -> { sent.add(new Sent(t, m, p)); return true; }, props, clock, mute);
         again.check();
         assertThat(titles()).containsExactly("Camera cleanup failed");
     }
@@ -300,5 +304,52 @@ class AlertCheckerTest {
         checker.check();
         assertThat(sent).isEmpty();
         assertThat(service.status().hubOk()).isNull();
+    }
+
+    // --- alerts on/off ---------------------------------------------------------------
+
+    @Test
+    void mutedSendsNothingButKeepsState() {
+        mute.set(true, null);
+        clock.advance(Duration.ofMinutes(61));
+        checker.check();
+        assertThat(sent).isEmpty();
+        assertThat(states.findById("uploader_silent")).hasValueSatisfying(s -> assertThat(s.isActive()).isTrue());
+    }
+
+    @Test
+    void startedWhileMutedAnnouncedAfterUnmute() {
+        mute.set(true, null);
+        clock.advance(Duration.ofMinutes(61));
+        checker.check();
+        mute.set(false, null);
+        checker.check();
+        assertThat(titles()).containsExactly("Camera uploader silent");
+    }
+
+    @Test
+    void startedAndClearedWhileMutedIsSilent() throws Exception {
+        mute.set(true, null);
+        clock.advance(Duration.ofMinutes(61));
+        checker.check();
+        heartbeat(clock.instant(), true, null);
+        checker.check();
+        mute.set(false, null);
+        checker.check();
+        assertThat(sent).isEmpty();
+        assertThat(states.findById("uploader_silent")).hasValueSatisfying(s -> assertThat(s.isActive()).isFalse());
+    }
+
+    @Test
+    void resolvedAfterUnmuteForProblemAnnouncedBefore() throws Exception {
+        clock.advance(Duration.ofMinutes(61));
+        checker.check();                       // announced
+        mute.set(true, null);
+        heartbeat(clock.instant(), true, null);
+        checker.check();                       // cleared while muted: no push yet
+        assertThat(titles()).containsExactly("Camera uploader silent");
+        mute.set(false, null);
+        checker.check();
+        assertThat(titles()).containsExactly("Camera uploader silent", "Resolved: Camera uploader silent");
     }
 }

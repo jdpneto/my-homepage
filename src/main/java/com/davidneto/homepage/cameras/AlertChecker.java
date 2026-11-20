@@ -45,10 +45,11 @@ public class AlertChecker {
     private final Notifier notifier;
     private final CameraProperties props;
     private final Clock clock;
+    private final AlertMute mute;
     private final Instant startedAt;
 
     public AlertChecker(ClipService clips, ClipFiles files, RetentionJob retention, AlertStateRepository states,
-                        Notifier notifier, CameraProperties props, Clock clock) {
+                        Notifier notifier, CameraProperties props, Clock clock, AlertMute mute) {
         this.clips = clips;
         this.files = files;
         this.retention = retention;
@@ -56,6 +57,7 @@ public class AlertChecker {
         this.notifier = notifier;
         this.props = props;
         this.clock = clock;
+        this.mute = mute;
         this.startedAt = clock.instant();
     }
 
@@ -127,12 +129,13 @@ public class AlertChecker {
 
         problems.put("cleanup_failed", retention.hasRunSinceStart() ? retention.lastFailure() : null);
 
+        boolean muted = mute.get().muted();
         problems.forEach((key, detail) -> {
-            if (detail != null) update(key, detail, now);
+            if (detail != null) update(key, detail, now, muted);
         });
     }
 
-    private void update(String key, Optional<String> detail, Instant now) {
+    private void update(String key, Optional<String> detail, Instant now, boolean muted) {
         AlertState s = states.findById(key).orElseGet(() -> {
             AlertState n = new AlertState();
             n.setAlertKey(key);
@@ -145,8 +148,9 @@ public class AlertChecker {
             if (start) s.setSince(now);
             boolean remind = s.isActive() && s.getLastNotifiedAt() != null
                     && Duration.between(s.getLastNotifiedAt(), now).compareTo(props.getReminderEvery()) >= 0;
-            if (start || remind || s.getLastNotifiedAt() == null) {
-                if (start) s.setLastNotifiedAt(null);
+            if (start) s.setLastNotifiedAt(null);
+            // Muted: keep tracking but send nothing; an undelivered start is announced after unmuting.
+            if (!muted && (start || remind || s.getLastNotifiedAt() == null)) {
                 if (notifier.send(title, detail.get(), "high")) {
                     s.setLastNotifiedAt(now);
                     log.warn("camera alert {}: {} - {}", start ? "started" : "sent", title, detail.get());
@@ -157,7 +161,13 @@ public class AlertChecker {
             s.setActive(true);
             s.setDetail(truncate(detail.get()));
             states.save(s);
-        } else if (s.isActive()) {
+        } else if (s.isActive() && s.getLastNotifiedAt() == null) {
+            // Never announced (e.g. it started and cleared while muted): close silently.
+            s.setActive(false);
+            s.setSince(null);
+            s.setDetail(null);
+            states.save(s);
+        } else if (s.isActive() && !muted) {
             if (notifier.send("Resolved: " + title, "OK again", "default")) {
                 log.info("camera alert resolved: {}", title);
                 s.setActive(false);

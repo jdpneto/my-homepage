@@ -109,6 +109,23 @@ public class ClipService {
         return repo.findCameras();
     }
 
+    /** One entry per camera: clip count and its newest clip (for the camera cards). */
+    public List<CameraSummary> cameraSummaries() {
+        Map<String, Long> counts = new TreeMap<>();
+        for (Object[] row : repo.countPerCamera()) counts.put((String) row[0], ((Number) row[1]).longValue());
+        Map<String, CameraClip> newest = new TreeMap<>();
+        for (CameraClip c : repo.findNewestPerCamera()) {
+            newest.merge(c.getCameraName(), c, (a, b) -> a.getId() > b.getId() ? a : b);
+        }
+        List<CameraSummary> out = new ArrayList<>();
+        for (CameraInfo cam : repo.findCameras()) {
+            CameraClip latest = newest.get(cam.name());
+            out.add(new CameraSummary(cam.name(), cam.cameraId(), counts.getOrDefault(cam.name(), 0L),
+                    latest == null ? null : latest.getId(), latest == null ? null : start(latest)));
+        }
+        return out;
+    }
+
     public StorageStatus status() {
         Path root = props.getRootDir();
         boolean volumeOk = files.volumeOk();

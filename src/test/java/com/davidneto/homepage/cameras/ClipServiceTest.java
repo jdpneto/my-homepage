@@ -225,4 +225,15 @@ class ClipServiceTest {
         assertThrows(ClipKeptException.class, () -> service.delete(v.id()));
         assertThat(root.resolve("Garage/2026-11-18/21-49-41.mp4")).exists();
     }
+
+    @Test
+    void cameraSummariesHaveCountsAndLatest() throws Exception {
+        fiveClips();
+        List<CameraSummary> s = service.cameraSummaries();
+        assertThat(s).extracting(CameraSummary::name).containsExactly("Backyard", "Garage", "Living Room");
+        CameraSummary garage = s.get(1);
+        assertThat(garage.clipCount()).isEqualTo(2);
+        assertThat(garage.latestStart()).isEqualTo(OffsetDateTime.parse("2026-11-18T21:49:41+01:00"));
+        assertThat(service.get(garage.latestClipId())).hasValueSatisfying(v -> assertThat(v.camera()).isEqualTo("Garage"));
+    }
 }
