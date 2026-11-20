@@ -8,7 +8,7 @@
  * (current filter as a query string, absent when there is no filter).
  *
  * API used (all under /api/cameras/): clips (paged list), clips/{id} (+ /video, /thumb,
- * /download, /keep), auth/revoke-all, alerts/test, alerts/mute.
+ * /download, /keep), auth/revoke-all, alerts/test, alerts/mute, status (signed-in probe).
  *
  * Data from the server only ever reaches the DOM through textContent / attributes.
  *
@@ -44,6 +44,7 @@
     const DAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
     const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
     const KEPT_MESSAGE = 'This clip is kept — unkeep it to delete.';
+    const SIGNED_OUT = 'Signed out — reload to sign in';
     const SWIPE_MIN_PX = 60;
     const CONFIRM_MS = 4000;       // the armed "Yes, delete" falls back to "Delete" after this
     const CONFIRM_MIN_MS = 500;    // ...and ignores clicks sooner than this (double-click/tap)
@@ -106,13 +107,25 @@
 
     // ---------------------------------------------------------------- feedback
 
+    const pendingSpeech = new Map(); // live region -> requestAnimationFrame id
+
     /**
      * Writes `text` into a live region so it is announced, even when it repeats the last
      * message: clear first, then set the text on the next frame.
      */
     function speak(region, text) {
+        silence(region);
+        pendingSpeech.set(region, requestAnimationFrame(() => {
+            pendingSpeech.delete(region);
+            region.textContent = text;
+        }));
+    }
+
+    /** Empties a live region and drops any text still waiting to be written into it. */
+    function silence(region) {
+        cancelAnimationFrame(pendingSpeech.get(region));
+        pendingSpeech.delete(region);
         region.textContent = '';
-        requestAnimationFrame(() => { region.textContent = text; });
     }
 
     /** Also says `text` inside the player while it is open (see playerLive). */
@@ -124,8 +137,20 @@
         banner.textContent = text;
         banner.setAttribute('role', 'alert');
         banner.hidden = false;
+        syncBannerSpace();
         announce(text);
     }
+
+    /**
+     * While the player is open the banner floats above it (see cameras.css); the player
+     * gets top padding of the banner's height so the banner never covers the clip title.
+     */
+    function syncBannerSpace() {
+        const h = !banner.hidden && !player.hidden ? Math.ceil(banner.getBoundingClientRect().height) : 0;
+        player.style.setProperty('--banner-space', h ? (h + 8) + 'px' : '0px');
+    }
+
+    window.addEventListener('resize', syncBannerSpace);
 
     // #toast stays rendered (and so in the accessibility tree) the whole time; CSS hides it
     // while it is empty. A live region that appears together with its text is often not read.
@@ -199,7 +224,14 @@
             throw new ApiError(0, true);
         }
         if (res.status === 401) {
-            showBanner('Signed out — reload to sign in');
+            showBanner(SIGNED_OUT);
+            throw new ApiError(401, true);
+        }
+        // A write refused with 403 usually means the session (and its CSRF cookie) ended,
+        // e.g. a logout in another tab. Ask a read-only endpoint: 401 there = signed out.
+        // The write is not retried.
+        if (res.status === 403 && method !== 'GET' && await signedOut()) {
+            showBanner(SIGNED_OUT);
             throw new ApiError(401, true);
         }
         if (!res.ok) throw new ApiError(res.status, false);
@@ -209,6 +241,18 @@
         } catch (e) {
             toast('Unexpected response from the server', true);
             throw new ApiError(res.status, true);
+        }
+    }
+
+    /** True when GET /status answers 401 (the session is gone). */
+    async function signedOut() {
+        try {
+            const res = await fetch(API + '/status', {
+                headers: { 'Accept': 'application/json' }, credentials: 'same-origin', cache: 'no-store'
+            });
+            return res.status === 401;
+        } catch (e) {
+            return false;
         }
     }
 
@@ -309,12 +353,24 @@
         showEmptyIfNone();
     }
 
-    /** The server's "No clips here yet." when the list has become empty for good. */
+    /**
+     * The server's empty state when the list has become empty for good: "No clips match this
+     * filter." + "Show all clips" when a filter is on (#clips[data-query]), else "No clips here yet."
+     */
     function showEmptyIfNone() {
         if (clips.querySelector('li.clip') || clips.dataset.next || document.querySelector('.cam-empty')) return;
         const empty = document.createElement('p');
         empty.className = 'cam-empty';
-        empty.textContent = 'No clips here yet.';
+        if (clips.dataset.query) {
+            empty.appendChild(document.createTextNode('No clips match this filter. '));
+            const reset = document.createElement('a');
+            reset.className = 'cam-empty-reset';
+            reset.href = '/admin/cameras';
+            reset.textContent = 'Show all clips';
+            empty.appendChild(reset);
+        } else {
+            empty.textContent = 'No clips here yet.';
+        }
         clips.parentElement.insertBefore(empty, clips);
     }
 
@@ -448,8 +504,14 @@
         if (!row || !row.isConnected || !CLIP_ID.test(row.dataset.id || '')) return;
         const navigating = isOpen();
         if (!navigating) {
-            returnFocus = document.activeElement;
+            // Opened with nothing focused (e.g. a scripted click): remember the row's button
+            // instead of <body>, so close() lands on the row or, if it was deleted, the fallback.
+            const active = document.activeElement;
+            returnFocus = active && active !== document.body && active !== document.documentElement
+                ? active : row.querySelector('.clip-open');
+            if (playerLive) silence(playerLive); // never read out a previous clip
             player.hidden = false;
+            syncBannerSpace();
         }
         current = row;
         detachedPrevious = null;
@@ -473,14 +535,17 @@
         stopVideo();
         disarmDelete();
         showMessage('');
+        if (playerLive) silence(playerLive);
         player.hidden = true;
+        syncBannerSpace();
         const row = current;
         current = null;
         detachedPrevious = null;
         if (row && row.isConnected) {
             row.scrollIntoView({ block: 'nearest' });
             focusRow(row);
-        } else if (returnFocus && returnFocus.isConnected && !player.contains(returnFocus)) {
+        } else if (returnFocus && returnFocus.isConnected && returnFocus !== document.body
+                && !player.contains(returnFocus)) {
             returnFocus.focus({ preventScroll: true });
         } else {
             // The row we came from was deleted: land on the list (or the filters) rather than <body>.
@@ -551,9 +616,16 @@
         if (current === row) close();
     }
 
+    /**
+     * `row` turned out to be gone on the server (opening it, or Keep, got 404): say so,
+     * remove the row and close the player. Unlike a Delete, nothing was asked for, so the
+     * player does not jump to some other clip.
+     */
     function clipGone(row) {
         toast('Clip no longer exists', true);
-        return dropAndAdvance(row);
+        const wasCurrent = isOpen() && current === row;
+        removeRow(row);
+        if (wasCurrent) close();
     }
 
     // A row's button (click, Enter or Space) opens the player.
@@ -634,7 +706,9 @@
                         showMessage(KEPT_MESSAGE);
                     }
                 } else if (err instanceof ApiError && err.status === 404) {
-                    clipGone(row);
+                    // Already deleted elsewhere: what was asked for, so move on as after a delete.
+                    toast('Clip no longer exists', true);
+                    await dropAndAdvance(row);
                 } else {
                     failed('Delete', err);
                 }
@@ -714,15 +788,44 @@
         el.addEventListener('click', () => whileBusy(el, handler));
     }
 
-    onClick('revoke-all', async () => {
-        try {
-            const body = await api('/auth/revoke-all', 'POST');
-            const n = Number(body && body.revoked) || 0;
-            toast('Signed out ' + n + (n === 1 ? ' app device' : ' app devices'));
-        } catch (err) {
-            failed('Signing out app devices', err);
-        }
-    });
+    // "Sign out all app devices" asks first, like Delete: the first click arms "Yes, sign out all"
+    // for 4 s; a second click (not the other half of a double-click) does it.
+    const revokeBtn = document.getElementById('revoke-all');
+    if (revokeBtn) {
+        const revokeLabel = revokeBtn.textContent;
+        let revokeArmedAt = 0;
+        let revokeTimer = null;
+        const disarmRevoke = () => {
+            clearTimeout(revokeTimer);
+            revokeArmedAt = 0;
+            revokeBtn.textContent = revokeLabel;
+            revokeBtn.classList.remove('confirm');
+        };
+        revokeBtn.addEventListener('click', () => {
+            if (isBusy(revokeBtn)) return;
+            if (!revokeArmedAt) {
+                revokeArmedAt = performance.now();
+                revokeBtn.textContent = 'Yes, sign out all';
+                revokeBtn.classList.add('confirm');
+                revokeTimer = setTimeout(disarmRevoke, CONFIRM_MS);
+                return;
+            }
+            if (performance.now() - revokeArmedAt < CONFIRM_MIN_MS) return;
+            disarmRevoke();
+            whileBusy(revokeBtn, async () => {
+                try {
+                    const body = await api('/auth/revoke-all', 'POST');
+                    const n = Number(body && body.revoked) || 0;
+                    toast('Signed out ' + n + (n === 1 ? ' app device' : ' app devices'));
+                } catch (err) {
+                    failed('Signing out app devices', err);
+                }
+            });
+        });
+        revokeBtn.addEventListener('keydown', e => {
+            if (e.repeat && (e.key === 'Enter' || e.key === ' ')) e.preventDefault();
+        });
+    }
 
     onClick('test-alert', async () => {
         try {

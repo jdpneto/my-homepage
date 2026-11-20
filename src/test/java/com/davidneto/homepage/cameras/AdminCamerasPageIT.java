@@ -189,4 +189,52 @@ class AdminCamerasPageIT {
         assertThat(js).doesNotContain("innerHTML ="); // names and triggers go in as text, never HTML
         mvc.perform(get("/css/cameras.css")).andExpect(status().isOk());
     }
+
+    @Test
+    void filterLinksOmitEmptyCameraParameter() throws Exception {
+        fourClips();
+        String html = page("/admin/cameras");
+        assertThat(html).doesNotContain("?camera=&amp;").doesNotContain("?camera=\"").doesNotContain("?camera=&");
+        assertThat(html).contains("href=\"/admin/cameras?trigger=person\"");
+    }
+
+    @Test
+    void emptyFilterResultSaysSoAndOffersToClear() throws Exception {
+        fourClips();
+        String html = page("/admin/cameras?camera=Backyard&trigger=person");
+        assertThat(html).contains("No clips match this filter").contains("href=\"/admin/cameras\"");
+        assertThat(page("/admin/cameras?kept=true")).contains("No clips match this filter");
+    }
+
+    @Test
+    void alertsAndDeviceControlsAreCollapsible() throws Exception {
+        String html = page("/admin/cameras");
+        assertThat(html).contains("<details").contains("<summary");
+        assertThat(html.indexOf("<details")).isLessThan(html.indexOf("id=\"alerts-toggle\""));
+    }
+
+    @Test
+    void rowsUseOrdinaryDoubleQuotedDataCamera() throws Exception {
+        fourClips();
+        assertThat(page("/admin/cameras")).contains("data-camera=\"Living Room\"");
+    }
+
+    @Test
+    void revokeAllAsksFirst() throws Exception {
+        String js = mvc.perform(get("/js/cameras.js")).andReturn().getResponse().getContentAsString();
+        assertThat(js).contains("Yes, sign out all");
+    }
+
+    @Test
+    void navLogoutIsAPostFormThatLogsOut() throws Exception {
+        String html = page("/admin/cameras");
+        assertThat(html).contains("<form").contains("action=\"/admin/logout\"").contains("method=\"post\"");
+        org.springframework.mock.web.MockHttpSession s = (org.springframework.mock.web.MockHttpSession)
+                mvc.perform(org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestBuilders
+                        .formLogin("/admin/login").user("admin").password("admin")).andReturn().getRequest().getSession(false);
+        mvc.perform(org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post("/admin/logout").session(s)
+                .with(org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.csrf()))
+                .andExpect(status().is3xxRedirection());
+        mvc.perform(get("/admin/cameras").session(s)).andExpect(status().is3xxRedirection());
+    }
 }

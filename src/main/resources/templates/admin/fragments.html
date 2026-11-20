@@ -11,7 +11,10 @@
         <a href="/admin/webdav-users" th:style="${active == 'webdav-users'} ? 'color: #fff; border-bottom: 1px solid var(--accent);' : 'color: var(--text-secondary);'">WebDAV Users</a>
         <a href="/admin/settings" th:style="${active == 'settings'} ? 'color: #fff; border-bottom: 1px solid var(--accent);' : 'color: var(--text-secondary);'">Settings</a>
     </div>
-    <a href="/admin/logout" style="color: var(--text-muted); font-size: 12px;">logout</a>
+    <!-- Logout must be a POST (with CSRF): a plain link to /admin/logout is a 404. -->
+    <form th:action="@{/admin/logout}" action="/admin/logout" method="post" style="margin: 0;">
+        <button type="submit" style="color: var(--text-muted); font-size: 12px; background: none; border: none; font-family: inherit; cursor: pointer; padding: 0;">logout</button>
+    </form>
 </nav>
 </body>
 </html>

@@ -22,13 +22,20 @@
         <ul class="cam-warnings" th:if="${not #lists.isEmpty(status.warnings)}">
             <li th:each="w : ${status.warnings}" th:text="${w}">camera quota 90% used</li>
         </ul>
-        <div class="cam-controls">
-            <span id="alerts-state" th:text="${alertsText}" th:attr="data-muted=${alertsMuted}">Alerts on</span>
-            <button type="button" id="alerts-toggle" th:text="${alertsMuted} ? 'Turn alerts on' : 'Turn alerts off'">Turn alerts off</button>
-            <button type="button" id="alerts-mute-8h">Mute 8 h</button>
-            <button type="button" id="test-alert">Send test alert</button>
-            <button type="button" id="revoke-all">Sign out all app devices</button>
-        </div>
+        <!-- Alerts and device controls: closed by default (they push the clips down on a
+             phone); the summary always shows the alerts state. -->
+        <details class="cam-more">
+            <summary>
+                <span id="alerts-state" th:text="${alertsText}" th:attr="data-muted=${alertsMuted}">Alerts on</span>
+                <span class="cam-more-label">alerts &amp; devices</span>
+            </summary>
+            <div class="cam-controls">
+                <button type="button" id="alerts-toggle" th:text="${alertsMuted} ? 'Turn alerts on' : 'Turn alerts off'">Turn alerts off</button>
+                <button type="button" id="alerts-mute-8h">Mute 8 h</button>
+                <button type="button" id="test-alert">Send test alert</button>
+                <button type="button" id="revoke-all">Sign out all app devices</button>
+            </div>
+        </details>
     </section>
 
     <section class="cam-cards" th:if="${not #lists.isEmpty(cameras)}">
@@ -42,27 +49,39 @@
                  th:src="@{/api/cameras/clips/{id}/thumb(id=${c.latestClipId})}">
             <span class="camera-card-name" th:text="${c.name}">Garage</span>
             <span class="camera-card-meta">
-                <span th:text="${c.clipCount} + (${c.clipCount == 1} ? ' clip' : ' clips')">12 clips</span>
-                <span th:if="${c.latestStart != null}"
-                      th:text="' · last ' + ${lastClipAgo[c.name]}">· last 4 min ago</span>
+                <span class="camera-card-count" th:text="${c.clipCount} + (${c.clipCount == 1} ? ' clip' : ' clips')">12 clips</span>
+                <span class="camera-card-last" th:if="${c.latestStart != null}"
+                      th:text="'· last ' + ${lastClipAgo[c.name]}">· last 4 min ago</span>
             </span>
         </a>
     </section>
 
-    <nav class="cam-filters" aria-label="Clip filters">
-        <a th:href="@{/admin/cameras(camera=${camera})}" th:classappend="${trigger == null and kept == null} ? 'active'"
+    <!-- Filter links keep the selected camera; with none selected they carry no camera
+         parameter at all (rather than an empty one). -->
+    <nav class="cam-filters" aria-label="Clip filters"
+         th:with="noCam=${camera == null}">
+        <a th:href="${noCam} ? @{/admin/cameras} : @{/admin/cameras(camera=${camera})}"
+           th:classappend="${trigger == null and kept == null} ? 'active'"
            th:attr="aria-current=${trigger == null and kept == null} ? 'true' : null">All</a>
-        <a th:href="@{/admin/cameras(camera=${camera},trigger='person')}" th:classappend="${trigger == 'person'} ? 'active'"
+        <a th:href="${noCam} ? @{/admin/cameras(trigger='person')} : @{/admin/cameras(camera=${camera},trigger='person')}"
+           th:classappend="${trigger == 'person'} ? 'active'"
            th:attr="aria-current=${trigger == 'person'} ? 'true' : null">Person</a>
-        <a th:href="@{/admin/cameras(camera=${camera},trigger='motion')}" th:classappend="${trigger == 'motion'} ? 'active'"
+        <a th:href="${noCam} ? @{/admin/cameras(trigger='motion')} : @{/admin/cameras(camera=${camera},trigger='motion')}"
+           th:classappend="${trigger == 'motion'} ? 'active'"
            th:attr="aria-current=${trigger == 'motion'} ? 'true' : null">Motion</a>
-        <a th:href="@{/admin/cameras(camera=${camera},trigger='animal')}" th:classappend="${trigger == 'animal'} ? 'active'"
+        <a th:href="${noCam} ? @{/admin/cameras(trigger='animal')} : @{/admin/cameras(camera=${camera},trigger='animal')}"
+           th:classappend="${trigger == 'animal'} ? 'active'"
            th:attr="aria-current=${trigger == 'animal'} ? 'true' : null">Animal</a>
-        <a th:href="@{/admin/cameras(camera=${camera},kept=true)}" th:classappend="${kept == true} ? 'active'"
+        <a th:href="${noCam} ? @{/admin/cameras(kept=true)} : @{/admin/cameras(camera=${camera},kept=true)}"
+           th:classappend="${kept == true} ? 'active'"
            th:attr="aria-current=${kept == true} ? 'true' : null">★ Kept</a>
     </nav>
 
-    <p class="cam-empty" th:if="${#lists.isEmpty(groups)}">No clips here yet.</p>
+    <th:block th:if="${#lists.isEmpty(groups)}">
+        <p class="cam-empty" th:if="${camera != null or trigger != null or kept != null}">No clips match this filter.
+            <a class="cam-empty-reset" th:href="@{/admin/cameras}">Show all clips</a></p>
+        <p class="cam-empty" th:unless="${camera != null or trigger != null or kept != null}">No clips here yet.</p>
+    </th:block>
 
     <div id="clips" th:data-next="${nextBefore}" th:data-query="${query}">
         <th:block th:each="g : ${groups}">
