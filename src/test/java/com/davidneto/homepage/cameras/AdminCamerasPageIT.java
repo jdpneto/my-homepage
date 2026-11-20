@@ -253,4 +253,27 @@ class AdminCamerasPageIT {
         assertThat(kept).contains("data-until=\"2099-01-01T20:00:00Z\"");
         assertThat(kept).contains("Alerts muted until 21:00");
     }
+
+    @Test
+    void rowsCarrySize() throws Exception {
+        fourClips();
+        String html = page("/admin/cameras");
+        long size = repo.findAll().get(0).getSizeBytes();
+        assertThat(size).isPositive();
+        assertThat(html).containsPattern("data-size=\"\\d+\"").contains("data-size=\"" + size + "\"");
+    }
+
+    @Test
+    void selectModeAndDayDeleteMarkupPresent() throws Exception {
+        fourClips();
+        String html = page("/admin/cameras");
+        assertThat(html).contains("id=\"select-toggle\"").contains("class=\"day-delete\"").contains("id=\"select-bar\"")
+                .contains("id=\"select-count\"").contains("id=\"select-delete\"").contains("id=\"select-cancel\"");
+    }
+
+    @Test
+    void bulkDeleteScriptUsesTheEndpointAndConfirms() throws Exception {
+        String js = mvc.perform(get("/js/cameras.js")).andReturn().getResponse().getContentAsString();
+        assertThat(js).contains("/clips/delete").contains("Yes, delete").contains("kept stay");
+    }
 }

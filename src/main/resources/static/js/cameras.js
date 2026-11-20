@@ -3,12 +3,17 @@
  *
  * Markup contract: templates/admin/cameras.html. Rows are li.clip with data-id, data-start
  * (ISO with the clip's own offset), data-camera, data-kept ("true"/"false"), data-triggers
- * (comma list); each row's content sits in a button.clip-open, which is what takes focus.
- * #clips carries data-next (cursor, absent when there is no further page) and data-query
- * (current filter as a query string, absent when there is no filter).
+ * (comma list), data-size (bytes); each row's content sits in a button.clip-open, which is
+ * what takes focus. #clips carries data-next (cursor, absent when there is no further page)
+ * and data-query (current filter as a query string, absent when there is no filter), and
+ * gets class "selecting" in select mode. Each day is an h3.day (span.day-label,
+ * span.day-meta, button.day-select, button.day-delete) followed by its ul.clip-list.
+ * Select mode: button#select-toggle (filter row), div#select-bar with #select-count,
+ * #select-delete, #select-cancel.
  *
  * API used (all under /api/cameras/): clips (paged list), clips/{id} (+ /video, /thumb,
- * /download, /keep), auth/revoke-all, alerts/test, alerts/mute, status (signed-in probe).
+ * /download, /keep), clips/delete (bulk, explicit ids), auth/revoke-all, alerts/test,
+ * alerts/mute, status (signed-in probe, storage line).
  *
  * Data from the server only ever reaches the DOM through textContent / attributes.
  *
@@ -51,6 +56,13 @@
     const RETRY_MIN_MS = 5000;     // infinite scroll: wait after a page that added nothing
     const RETRY_MAX_MS = 60000;
     const CLIP_ID = /^\d+$/;
+    const BULK_MAX = 500;          // ids per POST /clips/delete (the server refuses more)
+    const ARMED_SLACK_PX = 8;      // an armed day Delete disarms once its heading moves further
+    const KEPT_NOT_SELECTABLE = 'Kept clips can\'t be deleted — unkeep first';
+
+    // Select mode: selected ids (string) -> their li.clip.
+    let selecting = false;
+    const selected = new Map();
 
     // ---------------------------------------------------------------- time
 
@@ -337,8 +349,42 @@
         row.querySelector('.clip-camera').textContent = c.camera;
         row.querySelector('.clip-triggers').textContent = triggers.join(', ');
         row.querySelector('.clip-duration').textContent = c.durationSeconds + 's';
+        row.dataset.size = String(Math.max(0, Number(c.sizeBytes) || 0));
         setRowKept(row, c.kept === true);
+        decorateRow(row);
         return row;
+    }
+
+    function rowSize(row) {
+        return Number(row.dataset.size) || 0;
+    }
+
+    function sumSizes(rows) {
+        return rows.reduce((n, r) => n + rowSize(r), 0);
+    }
+
+    /** Sizes in headings, the bar and toasts: "3.4 MB" under 10 MB, else "34 MB". */
+    function mb(bytes) {
+        const v = bytes / 1048576;
+        if (v <= 0) return '0 MB';
+        if (v < 0.05) return '< 0.1 MB';
+        return (v < 9.95 ? v.toFixed(1) : String(Math.round(v))) + ' MB';
+    }
+
+    function clipCount(n) {
+        return n + (n === 1 ? ' clip' : ' clips');
+    }
+
+    /** Same format as the server's storage line (AdminCamerasController.size). */
+    function humanSize(bytes) {
+        const units = ['B', 'KB', 'MB', 'GB', 'TB'];
+        let v = Math.max(0, Number(bytes) || 0);
+        let u = 0;
+        while (v >= 1024 && u < units.length - 1) {
+            v /= 1024;
+            u++;
+        }
+        return u === 0 ? v + ' B' : v.toFixed(1) + ' ' + units[u];
     }
 
     /**
@@ -354,9 +400,7 @@
             last.parentElement.appendChild(row);
             return;
         }
-        const heading = document.createElement('h3');
-        heading.className = 'day';
-        heading.textContent = p ? dayLabel(p) : '';
+        const heading = buildHeading(p ? dayLabel(p) : '');
         const list = document.createElement('ul');
         list.className = 'clip-list';
         list.appendChild(row);
@@ -364,16 +408,45 @@
         clips.appendChild(list);
     }
 
-    /** Removes a row, and its day heading + list when that day has no rows left. */
-    function removeRow(row) {
+    /** Same structure as the server's day heading (templates/admin/cameras.html). */
+    function buildHeading(label) {
+        const heading = document.createElement('h3');
+        heading.className = 'day';
+        const text = document.createElement('span');
+        text.className = 'day-label';
+        text.textContent = label;
+        const meta = document.createElement('span');
+        meta.className = 'day-meta';
+        const pick = document.createElement('button');
+        pick.type = 'button';
+        pick.className = 'day-select';
+        pick.setAttribute('aria-pressed', 'false');
+        pick.textContent = 'Select day';
+        const del = document.createElement('button');
+        del.type = 'button';
+        del.className = 'day-delete';
+        del.textContent = 'Delete';
+        heading.append(text, meta, pick, del);
+        return heading;
+    }
+
+    /** Takes a row out of the DOM (and the selection); its day goes too when left empty. */
+    function detachRow(row) {
         const list = row.parentElement;
+        selected.delete(row.dataset.id);
         row.remove();
         if (list && !list.querySelector('li.clip')) {
             const heading = list.previousElementSibling;
             if (heading && heading.matches('h3.day')) heading.remove();
             list.remove();
         }
+    }
+
+    /** Removes a row, and its day heading + list when that day has no rows left. */
+    function removeRow(row) {
+        detachRow(row);
         showEmptyIfNone();
+        refreshListUi();
     }
 
     /**
@@ -395,6 +468,10 @@
             empty.textContent = 'No clips here yet.';
         }
         clips.parentElement.insertBefore(empty, clips);
+        // Nothing left to select: as the server renders an empty list (no Select chip).
+        if (selecting) setSelecting(false);
+        const toggle = document.getElementById('select-toggle');
+        if (toggle) toggle.hidden = true;
     }
 
     // ---------------------------------------------------------------- camera cards
@@ -439,6 +516,7 @@
                     stopScrolling();
                     showEmptyIfNone();
                 }
+                refreshListUi();
                 return added;
             })
             .catch(err => {
@@ -668,10 +746,22 @@
         if (wasCurrent) close();
     }
 
-    // A row's button (click, Enter or Space) opens the player.
+    // A row's button (click, Enter or Space) opens the player, or in select mode ticks the
+    // row. The day headings' buttons sit in #clips too.
     clips.addEventListener('click', e => {
+        const dayDelete = e.target.closest('button.day-delete');
+        if (dayDelete) return onDayDelete(dayDelete);
+        const daySelect = e.target.closest('button.day-select');
+        if (daySelect) return onDaySelect(daySelect);
         const row = e.target.closest('li.clip');
-        if (row && clips.contains(row)) open(row);
+        if (!row || !clips.contains(row)) return;
+        if (selecting) toggleRow(row);
+        else open(row);
+    });
+    // A held Enter repeats clicks: no auto-repeat on the heading buttons or rows (a repeat
+    // would arm and then confirm a day delete, or flip a tick back and forth).
+    clips.addEventListener('keydown', e => {
+        if (e.repeat && (e.key === 'Enter' || e.key === ' ')) e.preventDefault();
     });
 
     btnClose.addEventListener('click', close);
@@ -822,6 +912,422 @@
         else openBefore(current);
     }, { passive: true });
     player.addEventListener('touchcancel', () => { touchStart = null; }, { passive: true });
+
+    // ---------------------------------------------------------------- day headings, select mode, bulk delete
+
+    const selectToggle = document.getElementById('select-toggle');
+    const selectBar = document.getElementById('select-bar');
+    const selectCount = document.getElementById('select-count');
+    const selectDelete = document.getElementById('select-delete');
+    const selectCancel = document.getElementById('select-cancel');
+
+    function rowsOf(list) {
+        return list ? Array.from(list.querySelectorAll('li.clip')) : [];
+    }
+
+    function isKept(row) {
+        return row.dataset.kept === 'true';
+    }
+
+    /** The ul.clip-list under a day heading. */
+    function listOf(heading) {
+        const list = heading && heading.nextElementSibling;
+        return list && list.matches('ul.clip-list') ? list : null;
+    }
+
+    /**
+     * True when the day may go on past the loaded rows: it is the last day loaded and
+     * there is a further page (days are appended in order, so a later list = day ended).
+     */
+    function dayMayContinue(list) {
+        return !list.nextElementSibling && !!clips.dataset.next;
+    }
+
+    /**
+     * Loads pages until a row of an older day appears under `list`'s day, or the list ends.
+     * False when a page failed to load (loadMore has said why) or the day disappeared.
+     */
+    async function loadRestOfDay(list) {
+        while (list.isConnected && dayMayContinue(list)) {
+            const cursor = clips.dataset.next;
+            await loadMore();
+            if (clips.dataset.next === cursor) return false; // failed: no progress
+        }
+        return list.isConnected;
+    }
+
+    let headingSeq = 0;
+
+    /**
+     * Accessible names: the heading is "Today · 12 clips · 34 MB" (not its buttons' text),
+     * and its buttons name the day ("Delete Today", "Yes, delete 12 clips · 34 MB Today").
+     */
+    function labelHeading(heading) {
+        if (heading.dataset.named) return;
+        const label = heading.querySelector('.day-label');
+        const meta = heading.querySelector('.day-meta');
+        if (!label || !meta) return;
+        const n = ++headingSeq;
+        label.id = label.id || 'day-label-' + n;
+        meta.id = meta.id || 'day-meta-' + n;
+        heading.setAttribute('aria-labelledby', label.id + ' ' + meta.id);
+        for (const btn of heading.querySelectorAll('.day-select, .day-delete')) {
+            btn.id = btn.id || btn.className + '-' + n;
+            btn.setAttribute('aria-labelledby', btn.id + ' ' + label.id);
+        }
+        heading.dataset.named = 'true';
+    }
+
+    /** "Today · 12 clips · 34 MB" ("50+ clips" while the day may continue). */
+    function updateDayHeadings() {
+        for (const heading of clips.querySelectorAll('h3.day')) {
+            labelHeading(heading);
+            const list = listOf(heading);
+            const rows = rowsOf(list);
+            const meta = heading.querySelector('.day-meta');
+            if (meta) {
+                const more = list && dayMayContinue(list);
+                const n = rows.length + (more ? '+' : '');
+                meta.textContent = ' · ' + n + (rows.length === 1 && !more ? ' clip' : ' clips')
+                    + ' · ' + mb(sumSizes(rows));
+            }
+            const pick = heading.querySelector('.day-select');
+            if (pick) {
+                const selectable = rows.filter(r => !isKept(r));
+                const all = selectable.length > 0 && selectable.every(r => selected.has(r.dataset.id));
+                pick.setAttribute('aria-pressed', all ? 'true' : 'false');
+            }
+        }
+    }
+
+    function updateSelectCount() {
+        if (!selectCount) return;
+        const rows = Array.from(selected.values());
+        const text = rows.length + ' selected · ' + mb(sumSizes(rows));
+        if (selectCount.textContent !== text) selectCount.textContent = text;
+        if (selectBar) selectBar.dataset.count = String(rows.length);
+    }
+
+    /** After any change to the rows or the selection. */
+    function refreshListUi() {
+        updateDayHeadings();
+        updateSelectCount();
+    }
+
+    /** Select-mode state of one row (ticked: aria-pressed on its button). */
+    function decorateRow(row) {
+        const btn = row.querySelector('.clip-open');
+        if (!selecting) {
+            row.classList.remove('selected');
+            if (btn) {
+                btn.removeAttribute('aria-pressed');
+                btn.removeAttribute('aria-disabled');
+                btn.setAttribute('aria-haspopup', 'dialog');
+            }
+            return;
+        }
+        const kept = isKept(row);
+        if (kept) selected.delete(row.dataset.id);
+        const on = selected.has(row.dataset.id);
+        row.classList.toggle('selected', on);
+        if (btn) {
+            btn.removeAttribute('aria-haspopup'); // ticks, does not open the player
+            btn.setAttribute('aria-pressed', on ? 'true' : 'false');
+            if (kept) btn.setAttribute('aria-disabled', 'true');
+            else btn.removeAttribute('aria-disabled');
+        }
+    }
+
+    function setSelecting(on) {
+        if (on === selecting) return;
+        disarmBulk();
+        selecting = on;
+        selected.clear();
+        clips.classList.toggle('selecting', on);
+        if (selectToggle) selectToggle.setAttribute('aria-pressed', on ? 'true' : 'false');
+        const hadFocus = selectBar && selectBar.contains(document.activeElement);
+        if (selectBar) selectBar.hidden = !on;
+        allRows().forEach(decorateRow);
+        refreshListUi();
+        if (hadFocus && selectToggle) selectToggle.focus({ preventScroll: true });
+    }
+
+    function toggleRow(row) {
+        if (isKept(row)) {
+            toast(KEPT_NOT_SELECTABLE);
+            return;
+        }
+        const id = row.dataset.id;
+        if (selected.has(id)) selected.delete(id);
+        else selected.set(id, row);
+        disarmBulk(); // the armed numbers would be stale
+        decorateRow(row);
+        refreshListUi();
+    }
+
+    // ---- two-tap confirm shared by the day Delete buttons and the bar's Delete
+
+    let armed = null;      // { btn, idle, at, timer, ids, heading, top }
+    let bulkBusy = false;  // a day is loading or a delete is running: other bulk taps wait
+    let bulkQuietUntil = 0;
+
+    /** Busy, or the second half of a double-tap after a bulk action (the rows have moved). */
+    function bulkBlocked() {
+        return bulkBusy || performance.now() < bulkQuietUntil;
+    }
+
+    function disarmBulk() {
+        if (!armed) return;
+        clearTimeout(armed.timer);
+        armed.btn.textContent = armed.idle;
+        armed.btn.classList.remove('confirm');
+        armed = null;
+    }
+
+    function armBulk(btn, text, ids) {
+        disarmBulk();
+        const heading = btn.closest('h3.day');
+        armed = {
+            btn: btn, idle: btn.textContent, at: performance.now(), timer: 0, ids: ids,
+            heading: heading, top: heading ? heading.getBoundingClientRect().top : 0,
+        };
+        btn.textContent = text;
+        btn.classList.add('confirm');
+        armed.timer = setTimeout(disarmBulk, CONFIRM_MS);
+    }
+
+    /**
+     * An armed day Delete is only good while its day is the one on screen around it: once the
+     * heading has scrolled away, or a later day's sticky heading slides over it (all headings
+     * stick at the top of #clips), a tap there could delete a day the user is not looking at.
+     */
+    function armedDayOutOfPlace() {
+        const h = armed && armed.heading;
+        if (!h) return false;
+        if (!h.isConnected) return true;
+        const r = h.getBoundingClientRect();
+        if (Math.abs(r.top - armed.top) > ARMED_SLACK_PX) return true;
+        const next = nextDayHeading(h);
+        return !!next && next.getBoundingClientRect().top < r.bottom - 1;
+    }
+
+    function disarmIfOutOfPlace() {
+        if (armedDayOutOfPlace()) disarmBulk();
+    }
+
+    window.addEventListener('scroll', disarmIfOutOfPlace, { passive: true });
+    window.addEventListener('resize', disarmIfOutOfPlace);
+
+    /** Second tap on an armed button: >= CONFIRM_MIN_MS after arming, within CONFIRM_MS. */
+    async function confirmBulk() {
+        const a = armed;
+        if (!a || performance.now() - a.at < CONFIRM_MIN_MS) return; // other half of a double-tap
+        if (armedDayOutOfPlace()) { // moved since the label armed: start again
+            disarmBulk();
+            return;
+        }
+        disarmBulk();
+        // Exactly what the label showed, minus anything that has since gone or been kept.
+        const byId = new Map(allRows().map(r => [r.dataset.id, r]));
+        const ids = a.ids.filter(id => byId.has(id) && !isKept(byId.get(id)));
+        if (!ids.length) return;
+        const btn = a.btn;
+        const nextHeading = btn.closest('h3.day') && nextDayHeading(btn.closest('h3.day'));
+        const hadFocus = document.activeElement === btn;
+        bulkBusy = true;
+        btn.setAttribute('aria-disabled', 'true');
+        try {
+            await deleteIds(ids);
+        } finally {
+            bulkBusy = false;
+            bulkQuietUntil = performance.now() + CONFIRM_MIN_MS;
+            btn.removeAttribute('aria-disabled');
+        }
+        if (hadFocus && !btn.isConnected) {
+            // The day is gone: land on the next day's Delete, else the list, else the filters.
+            const next = nextHeading && nextHeading.isConnected ? nextHeading.querySelector('.day-delete') : null;
+            const first = allRows()[0];
+            const target = next || (first && first.querySelector('.clip-open')) || selectToggle;
+            if (target) target.focus({ preventScroll: true });
+        }
+    }
+
+    function nextDayHeading(heading) {
+        const list = listOf(heading);
+        const next = list && list.nextElementSibling;
+        return next && next.matches('h3.day') ? next : null;
+    }
+
+    async function onDayDelete(btn) {
+        if (selecting || bulkBlocked() || isBusy(btn)) return;
+        if (armed && armed.btn === btn) return confirmBulk();
+        disarmBulk();
+        const list = listOf(btn.closest('h3.day'));
+        if (!list) return;
+        const idle = btn.textContent;
+        bulkBusy = true;
+        btn.setAttribute('aria-disabled', 'true');
+        btn.textContent = 'Loading…';
+        let complete = false;
+        try {
+            complete = await loadRestOfDay(list);
+        } finally {
+            bulkBusy = false;
+            btn.removeAttribute('aria-disabled');
+            btn.textContent = idle;
+        }
+        if (!complete || !btn.isConnected || selecting) return;
+        const rows = rowsOf(list);
+        const doomed = rows.filter(r => !isKept(r));
+        const kept = rows.length - doomed.length;
+        if (!doomed.length) {
+            toast('Nothing to delete — all kept');
+            return;
+        }
+        const n = doomed.length;
+        armBulk(btn, kept
+            ? 'Yes, delete ' + n + ' · ' + kept + ' kept stay'
+            : 'Yes, delete ' + clipCount(n) + ' · ' + mb(sumSizes(doomed)),
+            doomed.map(r => r.dataset.id));
+    }
+
+    /** "Select day": loads the rest of the day, then ticks all its non-kept rows (or unticks). */
+    async function onDaySelect(btn) {
+        if (!selecting || bulkBlocked() || isBusy(btn)) return;
+        const list = listOf(btn.closest('h3.day'));
+        if (!list) return;
+        bulkBusy = true;
+        btn.setAttribute('aria-disabled', 'true');
+        let complete = false;
+        try {
+            complete = await loadRestOfDay(list);
+        } finally {
+            bulkBusy = false;
+            btn.removeAttribute('aria-disabled');
+        }
+        if (!complete || !selecting) return;
+        const selectable = rowsOf(list).filter(r => !isKept(r));
+        if (!selectable.length) {
+            toast(KEPT_NOT_SELECTABLE);
+            return;
+        }
+        const all = selectable.every(r => selected.has(r.dataset.id));
+        for (const r of selectable) {
+            if (all) selected.delete(r.dataset.id);
+            else selected.set(r.dataset.id, r);
+            decorateRow(r);
+        }
+        disarmBulk();
+        refreshListUi();
+    }
+
+    /**
+     * POST /clips/delete in chunks of BULK_MAX, one after the other; results are merged.
+     * Stops when signed out (banner) or offline; any other refused chunk stays on screen.
+     */
+    async function deleteIds(ids) {
+        const total = { deleted: [], freedBytes: 0, skippedKept: [], notFound: [], failed: [] };
+        let error = null;
+        let unsent = 0;
+        for (let i = 0; i < ids.length; i += BULK_MAX) {
+            const chunk = ids.slice(i, i + BULK_MAX);
+            try {
+                const body = await api('/clips/delete', 'POST', { ids: chunk.map(Number) }) || {};
+                for (const k of ['deleted', 'skippedKept', 'notFound', 'failed']) {
+                    if (Array.isArray(body[k])) total[k].push(...body[k].map(String));
+                }
+                total.freedBytes += Number(body.freedBytes) || 0;
+            } catch (err) {
+                error = err;
+                unsent += chunk.length;
+                if (err instanceof ApiError && (err.status === 401 || err.status === 0)) {
+                    unsent += Math.max(0, ids.length - i - chunk.length);
+                    break;
+                }
+            }
+        }
+        applyBulkResult(total, error, unsent);
+    }
+
+    function applyBulkResult(r, error, unsent) {
+        const byId = new Map(allRows().map(row => [row.dataset.id, row]));
+        let closePlayer = false;
+        for (const id of r.deleted.concat(r.notFound)) {
+            const row = byId.get(id);
+            if (!row) continue;
+            if (isOpen() && current === row) closePlayer = true;
+            detachRow(row);
+        }
+        for (const id of r.skippedKept) {
+            const row = byId.get(id);
+            if (!row) continue;
+            setRowKept(row, true); // kept on another device since the page loaded
+            decorateRow(row);
+        }
+        disarmBulk();
+        showEmptyIfNone();
+        refreshListUi();
+        rearm(); // the sentinel may have moved into view
+        if (closePlayer) close();
+
+        const done = r.deleted.length + r.notFound.length + r.skippedKept.length + r.failed.length;
+        if (error && !done) {
+            failed('Deleting clips', error);
+        } else if (done) {
+            let text = 'Deleted ' + clipCount(r.deleted.length) + ' · ' + mb(r.freedBytes) + ' freed';
+            if (r.skippedKept.length) text += ' · ' + r.skippedKept.length + ' kept skipped';
+            if (r.notFound.length) text += ' · ' + r.notFound.length + ' already gone';
+            if (r.failed.length) text += ' · ' + r.failed.length + ' could not be deleted';
+            if (unsent) text += ' · ' + unsent + ' not sent' + (error && error.status ? ' (' + error.status + ')' : '');
+            toast(text, r.failed.length > 0 || unsent > 0);
+        }
+        if (r.deleted.length) refreshStorage();
+    }
+
+    /** Re-renders the storage line from GET /status, in the server's wording. */
+    async function refreshStorage() {
+        const line = document.querySelector('#storage .cam-storage-line');
+        if (!line) return;
+        try {
+            const s = await api('/status');
+            if (!s) return;
+            const quota = Number(s.quotaBytes) || 0;
+            const free = quota > 0 ? Math.max(0, quota - (Number(s.quotaUsed) || 0)) : s.volumeFree;
+            line.textContent = 'Kept ' + humanSize(s.keptBytes) + ' · Last 30 days '
+                + humanSize(s.unkeptBytes) + ' · Free ' + humanSize(free);
+        } catch (e) {
+            // The line keeps its old numbers; a 401 has shown the banner.
+        }
+    }
+
+    if (selectToggle) selectToggle.addEventListener('click', () => setSelecting(!selecting));
+    if (selectCancel) selectCancel.addEventListener('click', () => setSelecting(false));
+    if (selectDelete) {
+        selectDelete.addEventListener('click', () => {
+            if (!selecting || bulkBlocked() || isBusy(selectDelete)) return;
+            if (armed && armed.btn === selectDelete) return confirmBulk();
+            const rows = Array.from(selected.values()).filter(r => r.isConnected && !isKept(r));
+            if (!rows.length) {
+                toast('Tap clips to select them first');
+                return;
+            }
+            armBulk(selectDelete, 'Yes, delete ' + rows.length, rows.map(r => r.dataset.id));
+        });
+    }
+    if (selectBar) {
+        selectBar.addEventListener('keydown', e => {
+            if (e.repeat && (e.key === 'Enter' || e.key === ' ')) e.preventDefault();
+        });
+    }
+    // Escape leaves select mode (the player, when open, takes Escape first: capture phase).
+    document.addEventListener('keydown', e => {
+        if (e.key === 'Escape' && selecting && !isOpen() && !e.defaultPrevented) {
+            e.preventDefault();
+            setSelecting(false);
+        }
+    });
+
+    refreshListUi();
 
     // ---------------------------------------------------------------- storage panel buttons
 

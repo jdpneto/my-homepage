@@ -1110,3 +1110,324 @@ body:has(.cam-player:not([hidden])) .cam-toast {
     border-color: var(--red, #ff4d4d);
     font-weight: bold;
 }
+
+/* === Bulk delete: day headings, select mode, selection bar ===
+ * State hooks: #clips.selecting (select mode), li.clip.selected,
+ * .day-select[aria-pressed="true"] (whole day ticked), .day-delete.confirm and
+ * #select-delete.confirm (armed, same look as the player's "Yes, delete"),
+ * #select-bar[data-count="0"]. */
+
+/* One line, always: every heading sticks at top:0 of #clips, so a later heading
+ * covers an earlier one only when they are the same height. A taller (wrapped)
+ * heading would peek out below the next day's, armed button and all. The meta
+ * text gives way first (ellipsis), then the day label; the buttons never do. */
+#clips h3.day {
+    display: flex;
+    align-items: center;
+    flex-wrap: nowrap;
+    gap: 8px;
+    min-width: 0;
+    white-space: nowrap;
+}
+
+#clips h3.day::before {
+    flex: none;
+}
+
+.day-label,
+.day-meta {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.day-label {
+    flex: 0 1 auto;
+}
+
+.day-meta {
+    flex: 1 1000 auto; /* shrinks long before the label does */
+    color: var(--text-secondary);
+    font-weight: normal;
+}
+
+/* Armed, the long "Yes, delete …" label needs the room: the decoration and the
+ * meta numbers (the button carries its own) step aside so the day stays readable. */
+#clips h3.day:has(.day-delete.confirm)::before,
+#clips h3.day:has(.day-delete.confirm) .day-meta {
+    display: none;
+}
+
+.day-delete,
+.day-select,
+#select-toggle,
+.cam-select-bar button {
+    font: inherit;
+    font-size: 12px;
+    font-weight: normal;
+    color: var(--accent);
+    background: transparent;
+    border: 1px solid var(--border-light);
+    border-radius: 3px;
+    padding: 2px 10px;
+    min-height: 28px;
+    cursor: pointer;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    white-space: nowrap;
+    transition: background-color 0.15s, border-color 0.15s;
+    -webkit-tap-highlight-color: transparent;
+}
+
+.day-delete,
+#select-delete {
+    color: var(--red);
+}
+
+/* At the right end; never shrunk, so the armed numbers always show in full. */
+.day-delete,
+.day-select {
+    flex: none;
+    margin-left: auto;
+}
+
+@media (hover: hover) {
+    .day-select:hover,
+    #select-toggle:hover,
+    #select-cancel:hover {
+        background: var(--accent-dim);
+        border-color: var(--accent);
+    }
+
+    .day-delete:hover,
+    #select-delete:hover {
+        background: var(--red-bg);
+        border-color: var(--red);
+    }
+}
+
+/* Armed: same look as the player's "Yes, delete". */
+.day-delete.confirm,
+#select-delete.confirm {
+    color: var(--bg);
+    background: var(--red);
+    border-color: var(--red);
+    font-weight: bold;
+}
+
+.day-delete[aria-disabled="true"],
+.day-select[aria-disabled="true"],
+#select-delete[aria-disabled="true"],
+#select-bar[data-count="0"] #select-delete {
+    opacity: 0.5;
+    cursor: progress;
+}
+
+#select-bar[data-count="0"] #select-delete {
+    cursor: not-allowed;
+}
+
+/* Only one of the two heading buttons at a time. */
+#clips:not(.selecting) .day-select,
+#clips.selecting .day-delete {
+    display: none;
+}
+
+/* (A trailing space in `content` would be trimmed in the flex button: margin instead.) */
+.day-select::before {
+    content: "☐";
+    content: "☐" / "";
+    margin-right: 6px;
+}
+
+.day-select[aria-pressed="true"] {
+    background: var(--accent-dim);
+    border-color: var(--accent);
+}
+
+.day-select[aria-pressed="true"]::before {
+    content: "☑";
+    content: "☑" / "";
+}
+
+/* The Select chip at the end of the filter row. */
+#select-toggle {
+    min-height: 32px;
+    padding: 4px 12px;
+    font-size: 13px;
+    margin-left: auto;
+}
+
+#select-toggle[aria-pressed="true"] {
+    color: var(--bg);
+    background: var(--accent);
+    border-color: var(--accent);
+    font-weight: bold;
+}
+
+/* Rows in select mode: a tick box over the thumbnail's corner. */
+#clips.selecting .clip {
+    position: relative;
+}
+
+#clips.selecting .clip::after {
+    content: "";
+    position: absolute;
+    top: 6px;
+    left: 6px;
+    width: 22px;
+    height: 22px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border: 2px solid var(--accent);
+    border-radius: 3px;
+    background: rgba(0, 0, 0, 0.65);
+    color: var(--bg);
+    font-weight: bold;
+    font-size: 15px;
+    line-height: 1;
+    pointer-events: none;
+}
+
+#clips.selecting .clip.selected {
+    border-color: var(--accent);
+    background: var(--accent-dim);
+    box-shadow: inset 0 0 0 1px var(--accent);
+}
+
+#clips.selecting .clip.selected::after {
+    content: "✓";
+    content: "✓" / "";
+    background: var(--accent);
+}
+
+/* Kept rows cannot be ticked: dimmed, no box (tapping says why). */
+#clips.selecting .clip[data-kept="true"] {
+    opacity: 0.45;
+}
+
+#clips.selecting .clip[data-kept="true"] .clip-open {
+    cursor: not-allowed;
+}
+
+#clips.selecting .clip[data-kept="true"]::after {
+    content: "★";
+    content: "★" / "";
+    border-style: dashed;
+    border-color: var(--text-muted);
+    color: var(--accent);
+}
+
+/* The bar sits over the bottom of the page: leave room under the last row. */
+.cam-page:has(#clips.selecting) {
+    padding-bottom: calc(96px + env(safe-area-inset-bottom));
+}
+
+.cam-select-bar {
+    position: fixed;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    z-index: 40; /* above the sticky day headings, under the banner and the player */
+    background: var(--surface);
+    border-top: 1px solid var(--accent);
+    box-shadow: 0 -4px 16px rgba(0, 0, 0, 0.6);
+    padding:
+        8px
+        max(16px, env(safe-area-inset-right))
+        max(8px, env(safe-area-inset-bottom))
+        max(16px, env(safe-area-inset-left));
+}
+
+.select-bar-inner {
+    max-width: 1136px; /* the page's content width */
+    margin: 0 auto;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+#select-count {
+    flex: 1;
+    min-width: 0;
+    color: #fff;
+    font-size: 14px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.cam-select-bar button {
+    min-height: 36px;
+    padding: 4px 14px;
+    font-size: 14px;
+}
+
+/* Toasts above the bar while it is shown. */
+body:has(#clips.selecting) .cam-toast {
+    bottom: calc(max(8px, env(safe-area-inset-bottom)) + 72px);
+}
+
+@media (any-pointer: coarse), (max-width: 600px) {
+    .day-delete,
+    .day-select,
+    #select-toggle,
+    .cam-select-bar button {
+        min-height: var(--tap);
+    }
+
+    .day-delete,
+    .day-select {
+        min-width: var(--tap);
+    }
+}
+
+@media (max-width: 600px) {
+    /* Six chips on one row at 375px: a little tighter than the filters alone. */
+    .cam-filters {
+        gap: 4px;
+    }
+
+    .cam-filters a,
+    #select-toggle {
+        padding: 0 6px;
+        font-size: 12px;
+    }
+
+    #select-toggle {
+        flex: 1 1 0;
+        margin-left: 0;
+        white-space: nowrap;
+    }
+
+    #clips h3.day {
+        font-size: 13px;
+    }
+
+    .day-delete,
+    .day-select {
+        padding: 0 10px;
+    }
+
+    /* Phone rows: the tick sits on the thumbnail. */
+    #clips.selecting .clip::after {
+        top: 50%;
+        left: 12px;
+        transform: translateY(-50%);
+    }
+
+    #clips.selecting .clip.selected {
+        border-color: var(--border);
+    }
+
+    .cam-select-bar button {
+        padding: 0 12px;
+    }
+
+    #select-count {
+        font-size: 13px;
+    }
+}

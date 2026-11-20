@@ -75,6 +75,7 @@
         <a th:href="${noCam} ? @{/admin/cameras(kept=true)} : @{/admin/cameras(camera=${camera},kept=true)}"
            th:classappend="${kept == true} ? 'active'"
            th:attr="aria-current=${kept == true} ? 'true' : null">★ Kept</a>
+        <button type="button" id="select-toggle" aria-pressed="false" th:if="${not #lists.isEmpty(groups)}">Select</button>
     </nav>
 
     <th:block th:if="${#lists.isEmpty(groups)}">
@@ -85,10 +86,11 @@
 
     <div id="clips" th:data-next="${nextBefore}" th:data-query="${query}">
         <th:block th:each="g : ${groups}">
-            <h3 class="day" th:text="${g.label}">Today</h3>
+            <!-- The script fills .day-meta ("· 12 clips · 34 MB") from the loaded rows. -->
+            <h3 class="day"><span class="day-label" th:text="${g.label}">Today</span><span class="day-meta"></span><button type="button" class="day-select" aria-pressed="false">Select day</button><button type="button" class="day-delete">Delete</button></h3>
             <ul class="clip-list">
                 <li class="clip" th:each="c : ${g.clips}"
-                    th:attr="data-id=${c.id},data-start=${c.start},data-camera=${c.camera},data-kept=${c.kept},data-triggers=${#strings.listJoin(c.triggers, ',')}">
+                    th:attr="data-id=${c.id},data-start=${c.start},data-camera=${c.camera},data-kept=${c.kept},data-size=${c.sizeBytes},data-triggers=${#strings.listJoin(c.triggers, ',')}">
                     <button type="button" class="clip-open" aria-haspopup="dialog">
                         <img class="thumb" loading="lazy" alt="" th:src="@{/api/cameras/clips/{id}/thumb(id=${c.id})}">
                         <span class="clip-time" th:text="${#temporals.format(c.start, 'HH:mm:ss')}">21:49:41</span>
@@ -102,6 +104,15 @@
         </th:block>
     </div>
     <div id="clips-sentinel" aria-hidden="true"></div>
+
+    <!-- Select mode (#select-toggle): fixed at the bottom while selecting. -->
+    <div id="select-bar" class="cam-select-bar" hidden role="region" aria-label="Selected clips">
+        <div class="select-bar-inner">
+            <span id="select-count" role="status">0 selected</span>
+            <button type="button" id="select-delete">Delete</button>
+            <button type="button" id="select-cancel">Cancel</button>
+        </div>
+    </div>
 
     <template id="clip-row">
         <li class="clip">
