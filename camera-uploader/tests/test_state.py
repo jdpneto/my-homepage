@@ -64,3 +64,18 @@ def test_not_given_up_before_give_up_after_has_passed(tmp_path):
     assert store.record_failure("k1", "boom", max_attempts=5, give_up_after=timedelta(hours=6),
                                 now=t0 + timedelta(hours=6, minutes=1)) is True
     assert store.status("k1") == "failed"
+
+
+def test_applied_mode_request_roundtrip(tmp_path):
+    path = tmp_path / "s.db"
+    assert StateStore(path).get_applied_mode_request() is None
+    assert StateStore(path).get_mode_request_result() is None
+    StateStore(path).set_applied_mode_request("req-1")
+    assert StateStore(path).get_applied_mode_request() == "req-1"
+    result = {"id": "req-1", "status": "applied", "error": None, "at": "2026-11-21T10:00:30+00:00"}
+    StateStore(path).set_applied_mode_request("req-1", result)
+    assert StateStore(path).get_applied_mode_request() == "req-1"
+    assert StateStore(path).get_mode_request_result() == result
+    StateStore(path).set_applied_mode_request("req-2")
+    assert StateStore(path).get_applied_mode_request() == "req-2"
+    assert StateStore(path).get_watermark() is None  # separate meta rows

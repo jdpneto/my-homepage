@@ -8,10 +8,12 @@ import time
 import uuid
 from dataclasses import dataclass
 from datetime import datetime, timedelta, tzinfo
+from typing import Awaitable, Callable
 
 from . import __version__
 from .config import Config
-from .hub import HubError
+from .hub import HubError, ModeSwitchError
+from .mode_request import PATH as MODE_REQUEST, SWITCHABLE, parse_request
 from .naming import remote_stem
 from .remux import RemuxError, RemuxUnavailable, remux
 from .sidecar import build_sidecar
@@ -36,6 +38,7 @@ class CycleResult:
     pending: int = 0
     failed: int = 0
     mode: str | None = None
+    mode_request: dict | None = None  # the heartbeat's `mode_request` when a request was handled this cycle
 
 
 class ClipFailed(Exception):
@@ -50,14 +53,110 @@ class CycleAborted(HubError):
 
 
 MAX_CONSECUTIVE_FAILURES = 2
+MODE_REQUEST_MAX_AGE = timedelta(minutes=5)
+
+_last_bad_request: str | None = None
+
+
+def _wall_now() -> datetime:
+    return datetime.now().astimezone()
+
+
+async def handle_mode_request(hub, dav, store: StateStore, wall_now: datetime) -> dict | None:
+    """Apply mode-request.json at most once, never after it expired. Never raises.
+
+    Returns the heartbeat's `mode_request` ({"id","status","error","at"}) when a request
+    was handled now, None when there was nothing (new) to handle. `wall_now` is this
+    Mac's own clock (aware): the request's times come from the VPS, not the hub.
+    """
+    global _last_bad_request
+    try:
+        text = await dav.get_text(MODE_REQUEST)
+    except Exception as exc:  # a request is never a reason to stop uploading
+        log.warning("could not read %s: %s: %s", MODE_REQUEST, type(exc).__name__, exc)
+        return None
+    try:
+        request = parse_request(text)
+    except Exception as exc:  # parse_request never raises; belt and braces for the cycle
+        log.warning("could not parse %s: %s", MODE_REQUEST, type(exc).__name__)
+        request = None
+    if request is None:
+        if text and text.strip() and text != _last_bad_request:
+            log.warning("ignoring a malformed %s", MODE_REQUEST)
+        _last_bad_request = text
+        return None
+    try:
+        if store.get_applied_mode_request() == request.id:
+            return None
+        log.info("mode request %s: switch to %r", request.id, request.mode)
+        expires = min(request.expires_at, request.requested_at + MODE_REQUEST_MAX_AGE)
+        status, error = "failed", None
+        if wall_now >= expires:
+            error = "expired before pickup"
+        elif request.mode not in SWITCHABLE:
+            error = "unknown mode"
+        # Remembered before the hub write: a crash or timeout can never make it happen twice.
+        store.set_applied_mode_request(request.id)
+        if error is None:
+            status, error = await _switch(hub, request.mode, expires)
+        result = {"id": request.id, "status": status, "error": error,
+                  "at": wall_now.isoformat(timespec="seconds")}
+        store.set_applied_mode_request(request.id, result)
+    except Exception as exc:
+        log.error("mode request %s: %s: %s", request.id, type(exc).__name__, exc)
+        result = {"id": request.id, "status": "failed", "error": "uploader error",
+                  "at": wall_now.isoformat(timespec="seconds")}
+    log.info("mode request %s: %s%s", request.id, result["status"],
+             f" ({result['error']})" if result["error"] else "")
+    return result
+
+
+async def _switch(hub, mode: str, not_after: datetime) -> tuple[str, str | None]:
+    """Switch, then read the mode back: (status, short reason or None).
+
+    The read-back decides even when the switch raised: cmd 602 may have gone through
+    before the follow-up read or the wait failed, and then the hub *is* in `mode`.
+    """
+    error = None
+    try:
+        await hub.switch_mode(mode, not_after=not_after)  # the expiry is re-checked right before the write
+    except ModeSwitchError as exc:
+        error = str(exc) or "hub refused"
+    except TimeoutError:
+        error = "hub timed out"
+    except Exception as exc:
+        log.warning("mode switch to %s failed: %s: %s", mode, type(exc).__name__, exc)
+        error = "hub refused"
+    after = await hub.mode()  # never raises; None when unknown
+    if after == mode:
+        if error is not None:
+            log.info("the hub reported %r switching to %s, but it is in %s now", error, mode, mode)
+        return "applied", None
+    if error is not None:
+        return "failed", error
+    if after is None:
+        return "applied", "not confirmed"  # the hub accepted it; the read-back failed
+    return "failed", "hub did not switch"
+
 
 async def run_cycle(hub, dav, store: StateStore, cfg: Config, now: datetime,
-                    remux_fn=remux, tz: tzinfo | None = None, on_uploaded=None) -> CycleResult:
+                    remux_fn=remux, tz: tzinfo | None = None, on_uploaded=None,
+                    wall_clock: Callable[[], datetime] = _wall_now,
+                    on_mode_request: Callable[[dict, str | None], Awaitable[None]] | None = None) -> CycleResult:
+    """`on_mode_request(result, mode)` reports a handled mode request at once (the heartbeat),
+    before this cycle's clips: a long catch-up must not hold the result back past its expiry."""
     # Refuse before touching anything if the 15 GB volume isn't behind the share.
     marker = await dav.get_text(MARKER)
     if marker is None or not marker.startswith(MARKER_TEXT):
         raise VolumeMarkerMissing(
             f"volume marker {MARKER} missing or wrong - refusing to upload (is the VPS volume mounted?)")
+
+    mode_request = await handle_mode_request(hub, dav, store, wall_clock())
+    if mode_request is not None and on_mode_request is not None:
+        try:
+            await on_mode_request(mode_request, await hub.mode())
+        except Exception as exc:  # reporting is never a reason to stop uploading
+            log.warning("mode request result not reported yet: %s: %s", type(exc).__name__, exc)
 
     settle = timedelta(seconds=cfg.settle_seconds)
     start, end = compute_window(now, store.get_watermark(), cfg.backfill_days)
@@ -65,7 +164,7 @@ async def run_cycle(hub, dav, store: StateStore, cfg: Config, now: datetime,
     hub_info = await hub.info()
     mode = await hub.mode()  # never raises; None when unknown
 
-    result = CycleResult(mode=mode)
+    result = CycleResult(mode=mode, mode_request=mode_request)
     still_todo: list[datetime] = []
     consecutive_failures = 0
     for clip in sorted(clips, key=lambda c: (c.start, c.channel, c.end)):

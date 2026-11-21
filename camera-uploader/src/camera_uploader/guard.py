@@ -14,6 +14,11 @@ during testing. Two layers stop this:
 Read-only helpers whose names merely look like writers (ptz_pan_position,
 unsubscribe, ...) are deliberately left alone: get_host_data and the library's
 error clean-up call them.
+
+The one exception is `set_listed_scene`: switching the hub to a mode (scene) the
+hub itself listed, with an id >= 0, for the remote mode switch. It calls the
+original Baichuan.set_scene directly; set_scene stays blocked for everyone else,
+including the library.
 """
 
 from __future__ import annotations
@@ -102,3 +107,21 @@ def install_read_only_guard() -> None:
                 continue
             setattr(cls, name, _blocker(cls.__name__, name, attr))
     _wrap_send_chunk()
+
+
+async def set_listed_scene(baichuan: Baichuan, scene_id: int) -> None:
+    """The uploader's only hub write: make one of the hub's own listed modes active.
+
+    Accepts only an int id >= 0 that the hub listed in its scenes (so never
+    "off", which is -1, and never an id the hub doesn't have). Everything else is
+    refused like any other blocked write.
+    """
+    scenes = getattr(baichuan, "_scenes", None)
+    if type(scene_id) is not int or scene_id < 0 or not isinstance(scenes, dict) or scene_id not in scenes:
+        _refuse(f"blocked set_scene({scene_id!r}): only a mode the hub listed (id >= 0) may be selected")
+    install_read_only_guard()
+    blocked = Baichuan.set_scene
+    original = getattr(blocked, "__wrapped__", None)
+    if not getattr(blocked, _MARK, False) or original is None:
+        _refuse("blocked set_scene: the read-only guard is not in place")
+    await original(baichuan, scene_id=scene_id)

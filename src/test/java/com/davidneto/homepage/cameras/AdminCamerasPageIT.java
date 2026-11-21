@@ -283,22 +283,68 @@ class AdminCamerasPageIT {
         return m.group(1);
     }
 
+    /** The mode is shown (and switched) by #mode-switch; the health line keeps uploader and hub only. */
     @Test
-    void healthLineShowsMode() throws Exception {
+    void healthLineLeavesTheModeToTheSwitch() throws Exception {
         String now = OffsetDateTime.now().toString();
         Files.writeString(root.resolve("heartbeat.json"),
                 "{\"time\":\"" + now + "\",\"hub_ok\":true,\"mode\":\"home\"}");
-        assertThat(healthLine(page("/admin/cameras"))).endsWith("Hub OK · mode: home");
+        String html = page("/admin/cameras");
+        assertThat(healthLine(html)).endsWith("Hub OK").doesNotContain("mode:");
+        assertThat(pressed(html)).containsExactly("home");
 
         Files.writeString(root.resolve("heartbeat.json"), "{\"time\":\"" + now + "\",\"hub_ok\":true}");
-        assertThat(healthLine(page("/admin/cameras"))).endsWith("Hub OK").doesNotContain("mode:");
+        html = page("/admin/cameras");
+        assertThat(healthLine(html)).endsWith("Hub OK").doesNotContain("mode:");
+        assertThat(pressed(html)).isEmpty();
 
         Files.writeString(root.resolve("heartbeat.json"),
                 "{\"time\":\"" + now + "\",\"hub_ok\":true,\"mode\":null}");
-        assertThat(healthLine(page("/admin/cameras"))).doesNotContain("mode:");
+        assertThat(pressed(page("/admin/cameras"))).isEmpty();
 
         Files.writeString(root.resolve("heartbeat.json"),
                 "{\"time\":\"" + now + "\",\"hub_ok\":true,\"mode\":\" \"}");
-        assertThat(healthLine(page("/admin/cameras"))).doesNotContain("mode:");
+        assertThat(pressed(page("/admin/cameras"))).isEmpty();
+    }
+
+    /** data-mode of every mode button rendered with aria-pressed="true". */
+    static List<String> pressed(String html) {
+        java.util.regex.Matcher m = java.util.regex.Pattern
+                .compile("<button[^>]*data-mode=\"(\\w+)\"[^>]*>").matcher(html);
+        List<String> modes = new java.util.ArrayList<>();
+        while (m.find()) {
+            if (m.group(0).contains("aria-pressed=\"true\"")) modes.add(m.group(1));
+        }
+        return modes;
+    }
+
+    @Test
+    void modeSwitchMarkup() throws Exception {
+        Files.writeString(root.resolve("heartbeat.json"), "{\"time\":\"" + OffsetDateTime.now()
+                + "\",\"hub_ok\":true,\"mode\":\"away\"}");
+        String html = page("/admin/cameras");
+        assertThat(html).contains("id=\"mode-switch\"");
+        assertThat(html).contains("data-mode=\"disarm\"").contains("data-mode=\"home\"").contains("data-mode=\"away\"")
+                .doesNotContain("data-mode=\"off\"");
+        assertThat(pressed(html)).containsExactly("away");
+        assertThat(html).contains("Mode:");
+        // Inside the storage panel, right after the health line.
+        assertThat(html.indexOf("id=\"mode-switch\"")).isGreaterThan(html.indexOf("class=\"cam-health\""))
+                .isLessThan(html.indexOf("<details"));
+
+        String js = mvc.perform(get("/js/cameras.js")).andReturn().getResponse().getContentAsString();
+        assertThat(js).contains("/mode").contains("Switching to").contains("Expired")
+                .contains("Not applied: ").contains("the Mac mini didn't pick it up").contains("Yes, disarm");
+        // Polls past expires_at + the server's grace (6 min), so "Expired" is seen rather than a time-out.
+        assertThat(js).contains("MODE_POLL_MAX_MS = 7 * 60 * 1000");
+    }
+
+    @Test
+    void pendingRequestIsRenderedSoThePageKeepsPolling() throws Exception {
+        assertThat(page("/admin/cameras")).doesNotContain("data-pending-id=");
+        Files.writeString(root.resolve("mode-request.json"), "{\"id\":\"abc-123\",\"mode\":\"away\",\"requested_at\":\""
+                + OffsetDateTime.now() + "\",\"expires_at\":\"" + OffsetDateTime.now().plusMinutes(5) + "\"}");
+        String html = page("/admin/cameras");
+        assertThat(html).contains("data-pending-id=\"abc-123\"").contains("data-pending-mode=\"away\"");
     }
 }

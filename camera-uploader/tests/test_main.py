@@ -373,3 +373,94 @@ async def test_skew_reported_from_hub_clock(cfg):
     with pytest.raises(Stop):
         await run_forever(cfg, lambda c: SkewedHub(), lambda c: dav, sleep=sleep, clock=lambda: NOW)
     assert dav.bodies[0]["hub_clock_skew_seconds"] == -400 * 86400
+
+
+async def test_mode_request_result_in_heartbeat_and_kept_across_restart(cfg):
+    import json as _json
+    from datetime import timedelta
+
+    requested = NOW.astimezone() - timedelta(minutes=1)  # run_forever's clock is NOW (naive, local)
+    request = _json.dumps({"id": "req-1", "mode": "home", "requested_at": requested.isoformat(),
+                           "expires_at": (requested + timedelta(minutes=5)).isoformat()})
+
+    class SwitchingHub(FakeHub):
+        current = "away"
+        switched: list[str] = []
+
+        async def mode(self):
+            return SwitchingHub.current
+
+        async def switch_mode(self, name, not_after=None):
+            SwitchingHub.switched.append(name)
+            SwitchingHub.current = name
+
+    class RequestDav(FakeDav):
+        def __init__(self):
+            super().__init__()
+            self.beats = []
+
+        async def get_text(self, path):
+            return request if path == "mode-request.json" else await super().get_text(path)
+
+        async def put_bytes(self, path, data, content_type):
+            if path == "heartbeat.json":
+                self.beats.append(_json.loads(data))
+
+    dav = RequestDav()
+    sleep, _ = sleeper(2)
+    with pytest.raises(Stop):
+        await run_forever(cfg, lambda c: SwitchingHub(), lambda c: dav, sleep=sleep, clock=lambda: NOW)
+    assert SwitchingHub.switched == ["home"]  # two cycles, one switch
+    last = dav.beats[-1]
+    assert last["mode"] == "home"
+    assert last["mode_request"]["id"] == "req-1" and last["mode_request"]["status"] == "applied"
+
+    # Restarted: the result is still reported (the page must not flip to "expired"), nothing re-applied.
+    dav2 = RequestDav()
+    sleep, _ = sleeper(1)
+    with pytest.raises(Stop):
+        await run_forever(cfg, lambda c: SwitchingHub(), lambda c: dav2, sleep=sleep, clock=lambda: NOW)
+    assert SwitchingHub.switched == ["home"]
+    assert dav2.beats[-1]["mode_request"]["status"] == "applied"
+
+
+async def test_mode_request_result_sent_before_the_cycle_ends(cfg):
+    import json as _json
+    from datetime import timedelta
+
+    requested = NOW.astimezone() - timedelta(minutes=1)
+    request = _json.dumps({"id": "req-7", "mode": "away", "requested_at": requested.isoformat(),
+                           "expires_at": (requested + timedelta(minutes=5)).isoformat()})
+    seen_during_cycle = []
+
+    class Dav(FakeDav):
+        beats: list = []
+
+        async def get_text(self, path):
+            return request if path == "mode-request.json" else await super().get_text(path)
+
+        async def put_bytes(self, path, data, content_type):
+            if path == "heartbeat.json":
+                Dav.beats.append(_json.loads(data))
+
+    class SlowCycleHub(FakeHub):
+        current = "home"
+
+        async def mode(self):
+            return SlowCycleHub.current
+
+        async def switch_mode(self, name, not_after=None):
+            SlowCycleHub.current = name
+
+        async def list_clips(self, start, end):
+            # Still in the cycle (a long catch-up would follow): the page must already see the result.
+            seen_during_cycle.extend(Dav.beats)
+            return []
+
+    sleep, _ = sleeper(1)
+    with pytest.raises(Stop):
+        await run_forever(cfg, lambda c: SlowCycleHub(), lambda c: Dav(), sleep=sleep, clock=lambda: NOW)
+    reported = [b for b in seen_during_cycle if b.get("mode_request")]
+    assert reported, seen_during_cycle
+    assert reported[-1]["mode_request"]["id"] == "req-7" and reported[-1]["mode_request"]["status"] == "applied"
+    assert reported[-1]["mode"] == "away"

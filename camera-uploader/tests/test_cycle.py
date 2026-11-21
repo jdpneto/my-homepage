@@ -1,7 +1,7 @@
 import json
 import json
 import shutil
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
@@ -27,13 +27,30 @@ def clip(minutes_ago, length=30, name="Backyard", cid="uid1", ch=1, second=0):
 
 
 class FakeHub:
-    def __init__(self, clips, payload=b"video-bytes", fail_download=None, mode=None):
+    def __init__(self, clips, payload=b"video-bytes", fail_download=None, mode=None,
+                 listed_modes=("disarm", "home", "away"), switch_error=None):
         self.clips, self.payload, self.fail_download = clips, payload, fail_download or set()
         self.downloads, self.windows = [], []
         self._mode = mode
+        self.listed_modes, self.switch_error = listed_modes, switch_error
+        self.switch_calls: list[str] = []  # asked to switch
+        self.scene_writes: list[str] = []  # actually switched (the hub write)
+        self.not_after: list = []  # the deadline passed with each switch
 
     async def mode(self):
         return self._mode
+
+    async def switch_mode(self, name, not_after=None):
+        from camera_uploader.hub import ModeSwitchError
+
+        self.switch_calls.append(name)
+        self.not_after.append(not_after)
+        if self.switch_error is not None:
+            raise self.switch_error
+        if name not in self.listed_modes:
+            raise ModeSwitchError("unknown mode")
+        self.scene_writes.append(name)
+        self._mode = name
 
     async def list_clips(self, start, end):
         self.windows.append((start, end))
@@ -51,8 +68,9 @@ class FakeHub:
 
 
 class FakeDav:
-    def __init__(self, marker=True, fail=None, marker_text=None):
+    def __init__(self, marker=True, fail=None, marker_text=None, texts=None):
         self.marker, self.calls, self.fail = marker, [], fail or {}
+        self.texts = texts or {}  # path -> text (None = 404); other paths answer with the marker text
         self.marker_text = marker_text if marker_text is not None else (
             "camera clips live on the 15 GB volume - do not delete\n" if marker else None)
         self.files: dict[str, bytes] = {}
@@ -67,6 +85,8 @@ class FakeDav:
 
     async def get_text(self, path):
         self.calls.append(("GET", path))
+        if path in self.texts:
+            return self.texts[path]
         return self.marker_text
 
     async def ensure_dirs(self, stem):
@@ -103,8 +123,11 @@ def store(cfg):
     return StateStore(cfg.state_path)
 
 
-async def run(hub, dav, store, cfg, now=NOW, remux_fn=copy_remux):
-    return await run_cycle(hub, dav, store, cfg, now, remux_fn=remux_fn, tz=TZ)
+WALL = datetime(2026, 11, 21, 10, 1, 0, tzinfo=timezone.utc)  # the uploader's own clock (aware)
+
+
+async def run(hub, dav, store, cfg, now=NOW, remux_fn=copy_remux, wall=WALL):
+    return await run_cycle(hub, dav, store, cfg, now, remux_fn=remux_fn, tz=TZ, wall_clock=lambda: wall)
 
 
 async def test_uploads_new_clip_mp4_then_json(cfg, store):
@@ -296,3 +319,223 @@ async def test_mode_failure_does_not_fail_the_cycle(cfg, store):
     stem = f"Backyard/{c.start:%Y-%m-%d}/{c.start:%H-%M-%S}"
     assert json.loads(dav.files[f"{stem}.json"])["mode"] is None
     assert result.uploaded == 1 and result.mode is None
+
+
+# --- remote mode switch ---------------------------------------------------------
+
+def mode_request(mode="away", rid="req-1", requested=datetime(2026, 11, 21, 10, 0, 0, tzinfo=timezone.utc)):
+    return json.dumps({"id": rid, "mode": mode, "requested_at": requested.isoformat(),
+                       "expires_at": (requested + timedelta(minutes=5)).isoformat()})
+
+
+def request_dav(text):
+    return FakeDav(texts={"mode-request.json": text})
+
+
+async def test_request_applied_once(cfg, store):
+    hub = FakeHub([], mode="home")
+    first = await run(hub, request_dav(mode_request("away")), store, cfg)
+    assert hub.scene_writes == ["away"]
+    assert first.mode_request == {"id": "req-1", "status": "applied", "error": None,
+                                  "at": "2026-11-21T10:01:00+00:00"}
+    assert first.mode == "away"
+    # Seen again on the next cycle (and after a restart: the id is in the state DB).
+    hub2 = FakeHub([], mode="home")  # e.g. switched back in the Reolink app meanwhile
+    second = await run(hub2, request_dav(mode_request("away")), StateStore(cfg.state_path), cfg,
+                       wall=WALL + timedelta(seconds=30))
+    assert hub2.switch_calls == [] and hub2.scene_writes == []
+    assert second.mode_request is None and second.mode == "home"
+    # A newer request (new id) is applied.
+    third = await run(hub2, request_dav(mode_request("disarm", rid="req-2")), store, cfg,
+                      wall=WALL + timedelta(seconds=60))
+    assert hub2.scene_writes == ["disarm"] and third.mode_request["status"] == "applied"
+
+
+async def test_expired_request_is_not_applied(cfg, store):
+    # The Mac mini was offline for an hour; the request it finds is long stale.
+    hub = FakeHub([clip(5)], mode="home")
+    result = await run(hub, request_dav(mode_request("away")), store, cfg, wall=WALL + timedelta(hours=1))
+    assert hub.switch_calls == [] and hub.scene_writes == []
+    assert result.mode_request["status"] == "failed"
+    assert result.mode_request["error"] == "expired before pickup"
+    assert result.uploaded == 1
+    # Exactly at expires_at counts as expired too; and it is reported once, not every cycle.
+    hub2 = FakeHub([], mode="home")
+    late = await run(hub2, request_dav(mode_request("away", rid="req-2")), store, cfg,
+                     wall=datetime(2026, 11, 21, 10, 5, 0, tzinfo=timezone.utc))
+    assert hub2.switch_calls == [] and late.mode_request["error"] == "expired before pickup"
+    again = await run(hub2, request_dav(mode_request("away", rid="req-2")), store, cfg,
+                      wall=WALL + timedelta(hours=2))
+    assert again.mode_request is None
+
+
+async def test_expiry_capped_at_five_minutes_after_request(cfg, store):
+    hub = FakeHub([], mode="home")
+    text = json.dumps({"id": "req-9", "mode": "away", "requested_at": "2026-11-21T10:00:00+00:00",
+                       "expires_at": "2026-11-22T10:00:00+00:00"})  # a bogus far-future expiry
+    result = await run(hub, request_dav(text), store, cfg, wall=WALL + timedelta(minutes=10))
+    assert hub.scene_writes == [] and result.mode_request["error"] == "expired before pickup"
+
+
+async def test_unknown_mode_fails_without_hub_write(cfg, store):
+    for i, mode in enumerate(("off", "party", "disarm")):
+        hub = FakeHub([clip(5 + i)], mode="home", listed_modes=("home", "away"))  # disarm not listed
+        result = await run(hub, request_dav(mode_request(mode, rid=f"req-{mode}")), store, cfg)
+        assert hub.scene_writes == [], mode
+        assert result.mode_request["status"] == "failed", mode
+        assert result.mode_request["error"] == "unknown mode", mode
+        assert result.uploaded == 1, mode
+        if mode != "disarm":  # off and unknown names never even reach the hub object
+            assert hub.switch_calls == [], mode
+    assert store.get_applied_mode_request() == "req-disarm"
+
+
+async def test_switch_failure_does_not_fail_the_cycle(cfg, store):
+    from camera_uploader.hub import ModeSwitchError
+
+    for i, error in enumerate((ModeSwitchError("hub refused"), TimeoutError(), RuntimeError("bug"))):
+        c = clip(5 + i)
+        hub = FakeHub([c], mode="home", switch_error=error)
+        dav = request_dav(mode_request("away", rid=f"req-{i}"))
+        result = await run(hub, dav, store, cfg)
+        assert result.mode_request["status"] == "failed"
+        assert result.mode_request["error"]  # a short reason
+        assert result.uploaded == 1 and store.status(c.key) == "uploaded"
+    # A broken request read (network) is no reason to stop uploading either.
+    c = clip(9)
+    dav = FakeDav(fail={})
+    async def broken_get(path, _orig=dav.get_text):
+        if path == "mode-request.json":
+            raise TransientError("502")
+        return await _orig(path)
+    dav.get_text = broken_get
+    result = await run(FakeHub([c]), dav, store, cfg)
+    assert result.uploaded == 1 and result.mode_request is None
+
+
+async def test_switch_not_confirmed_by_hub_is_failed(cfg, store):
+    class StuckHub(FakeHub):
+        async def switch_mode(self, name, not_after=None):
+            self.switch_calls.append(name)  # the hub said OK but stays in home
+
+    hub = StuckHub([], mode="home")
+    result = await run(hub, request_dav(mode_request("away")), store, cfg)
+    assert result.mode_request["status"] == "failed"
+    assert result.mode_request["error"] == "hub did not switch"
+
+
+async def test_no_request_file_no_switch(cfg, store):
+    for text in (None, "", "garbage"):
+        hub = FakeHub([clip(5)], mode="home")
+        dav = request_dav(text)
+        result = await run(hub, dav, store, cfg)
+        assert hub.switch_calls == [] and result.mode_request is None
+    # The request is read after the marker check and before the hub is asked for clips.
+    dav = request_dav(None)
+    await run(FakeHub([]), dav, store, cfg)
+    gets = [p for op, p in dav.calls if op == "GET"]
+    assert gets == ["volume-marker.txt", "mode-request.json"]
+    # A missing marker refuses before the request is even read.
+    dav = FakeDav(marker=False, texts={"mode-request.json": mode_request("away")})
+    hub = FakeHub([])
+    with pytest.raises(WebDavError, match="volume marker"):
+        await run(hub, dav, store, cfg)
+    assert hub.switch_calls == [] and [p for op, p in dav.calls] == ["volume-marker.txt"]
+
+
+async def test_request_id_remembered_before_the_hub_write(cfg, store):
+    # A crash (or power cut) during the switch must not let the next cycle switch again.
+    seen = []
+
+    class CheckingHub(FakeHub):
+        async def switch_mode(self, name, not_after=None):
+            seen.append(store.get_applied_mode_request())
+            raise KeyboardInterrupt  # the process dies mid-switch
+
+    with pytest.raises(KeyboardInterrupt):
+        await run(CheckingHub([], mode="home"), request_dav(mode_request("away")), store, cfg)
+    assert seen == ["req-1"]
+    hub = FakeHub([], mode="home")
+    result = await run(hub, request_dav(mode_request("away")), StateStore(cfg.state_path), cfg)
+    assert hub.switch_calls == [] and result.mode_request is None
+
+
+async def test_hostile_request_does_not_break_the_cycle(cfg, store):
+    for i, text in enumerate(("[" * 200_000, "x" * 5_000_000)):
+        c = clip(5 + i)
+        hub = FakeHub([c], mode="home")
+        result = await run(hub, request_dav(text), store, cfg)
+        assert hub.switch_calls == [] and result.mode_request is None
+        assert result.uploaded == 1 and store.status(c.key) == "uploaded"
+
+
+async def test_switch_error_but_hub_switched_is_applied(cfg, store):
+    # cmd 602 went through, but the follow-up read (or the wait) failed: the hub is in away.
+    from camera_uploader.hub import ModeSwitchError
+
+    class SwitchedThenFailedHub(FakeHub):
+        async def switch_mode(self, name, not_after=None):
+            self.switch_calls.append(name)
+            self.scene_writes.append(name)
+            self._mode = name
+            raise self.switch_error
+
+    for i, error in enumerate((ModeSwitchError("hub timed out"), ModeSwitchError("hub refused"),
+                               TimeoutError(), RuntimeError("bug"))):
+        hub = SwitchedThenFailedHub([], mode="home", switch_error=error)
+        result = await run(hub, request_dav(mode_request("away", rid=f"req-{i}")), store, cfg)
+        assert result.mode_request["status"] == "applied", error
+        assert result.mode_request["error"] is None, error
+        assert result.mode == "away"
+    # Failed and the hub did not move: still failed, with the reason.
+    hub = FakeHub([], mode="home", switch_error=ModeSwitchError("hub timed out"))
+    result = await run(hub, request_dav(mode_request("away", rid="req-x")), store, cfg)
+    assert result.mode_request["status"] == "failed" and result.mode_request["error"] == "hub timed out"
+
+
+async def test_switch_not_read_back_is_applied_but_not_confirmed(cfg, store):
+    class BlindHub(FakeHub):
+        async def mode(self):
+            return None  # the read-back failed
+
+    hub = BlindHub([], mode="home")
+    result = await run(hub, request_dav(mode_request("away")), store, cfg)
+    assert hub.scene_writes == ["away"]
+    assert result.mode_request["status"] == "applied"
+    assert result.mode_request["error"] == "not confirmed"
+
+
+async def test_mode_request_reported_at_once(cfg, store):
+    # The result goes out before the cycle's clips: a long catch-up must not leave the page
+    # showing "pending" until it flips to "expired" while the hub is already in away.
+    events = []
+
+    class TrackingHub(FakeHub):
+        async def list_clips(self, start, end):
+            events.append("list_clips")
+            return await super().list_clips(start, end)
+
+    async def report(result, mode):
+        events.append(("report", result["status"], mode))
+
+    hub = TrackingHub([clip(5)], mode="home")
+    result = await run_cycle(hub, request_dav(mode_request("away")), store, cfg, NOW, remux_fn=copy_remux,
+                             tz=TZ, wall_clock=lambda: WALL, on_mode_request=report)
+    assert events == [("report", "applied", "away"), "list_clips"]
+    assert result.mode_request["status"] == "applied" and result.uploaded == 1
+    # The switch itself is told the request's deadline (re-checked right before the hub write).
+    assert hub.not_after == [datetime(2026, 11, 21, 10, 5, 0, tzinfo=timezone.utc)]
+
+    # Nothing new: no report. A broken report never breaks the cycle.
+    events.clear()
+    await run_cycle(TrackingHub([]), request_dav(mode_request("away")), store, cfg, NOW,
+                    remux_fn=copy_remux, tz=TZ, wall_clock=lambda: WALL, on_mode_request=report)
+    assert events == ["list_clips"]
+
+    async def broken(result, mode):
+        raise RuntimeError("heartbeat bug")
+
+    c = clip(7)
+    result = await run_cycle(FakeHub([c], mode="home"), request_dav(mode_request("home", rid="req-2")), store,
+                             cfg, NOW, remux_fn=copy_remux, tz=TZ, wall_clock=lambda: WALL, on_mode_request=broken)
+    assert result.mode_request["status"] == "applied" and result.uploaded == 1

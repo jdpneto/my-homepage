@@ -90,7 +90,16 @@ async def run_forever(cfg: Config, hub_factory, dav_factory, sleep=asyncio.sleep
     consecutive = 0
     heartbeat = Heartbeat()
     heartbeat.started(clock().astimezone())
+    heartbeat.set_mode_request_result(store.get_mode_request_result())  # survives restarts
     beat_task = asyncio.ensure_future(_background_heartbeat(heartbeat, dav, clock))
+
+    async def report_mode_request(result: dict, mode: str | None) -> None:
+        """Sent at once, mid-cycle: the page is waiting for it (and would show "expired")."""
+        heartbeat.set_mode_request_result(result)
+        if mode is not None:
+            heartbeat.set_mode(mode)
+        await heartbeat.maybe_send(dav, clock().astimezone())
+
     log.info("camera-uploader %s starting: %r", __version__, cfg)
     try:
         while True:
@@ -100,7 +109,9 @@ async def run_forever(cfg: Config, hub_factory, dav_factory, sleep=asyncio.sleep
                     hub = hub_factory(cfg)
                     await hub.connect()
                 result = await run_cycle(hub, dav, store, cfg, await _cycle_now(hub, clock, heartbeat),
-                                         on_uploaded=lambda _c: heartbeat.progress(clock().astimezone()))
+                                         on_uploaded=lambda _c: heartbeat.progress(clock().astimezone()),
+                                         wall_clock=lambda: clock().astimezone(),
+                                         on_mode_request=report_mode_request)
                 if result.uploaded or result.failed:
                     log.info("cycle: %d uploaded, %d pending, %d failed, %d already done",
                              result.uploaded, result.pending, result.failed, result.skipped)
@@ -126,6 +137,8 @@ async def run_forever(cfg: Config, hub_factory, dav_factory, sleep=asyncio.sleep
                 log.log(level, "%s: %s - retrying in %ds (failure #%d)", type(exc).__name__, exc, delay, consecutive,
                         exc_info=not known)
             now = clock().astimezone()
+            # From the state DB, not the cycle result: also reported when the cycle failed after handling it.
+            heartbeat.set_mode_request_result(store.get_mode_request_result())
             heartbeat.record(hub_ok, error, getattr(hub, "camera_count", None), now)
             heartbeat.suppress((error or "").startswith("AuthError"))  # a PUT would only add a failed login
             await heartbeat.maybe_send(dav, now)
@@ -154,7 +167,8 @@ async def run_once(cfg: Config, hub_factory, dav_factory, clock=datetime.now) ->
     hub = hub_factory(cfg)
     try:
         await hub.connect()
-        result = await run_cycle(hub, dav, store, cfg, await _cycle_now(hub, clock))
+        result = await run_cycle(hub, dav, store, cfg, await _cycle_now(hub, clock),
+                                 wall_clock=lambda: clock().astimezone())
         log.info("once: %d uploaded, %d pending, %d failed, %d already done",
                  result.uploaded, result.pending, result.failed, result.skipped)
         return 0

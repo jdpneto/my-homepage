@@ -145,3 +145,47 @@ def test_http_writes_and_unknowns_blocked(body, param):
 def test_http_send_chunk_is_wrapped():
     install_read_only_guard()
     assert getattr(Host.send_chunk, "__camera_uploader_http_checked__", False)
+
+
+# --- remote mode switch: the single allowed hub write ----------------------------
+
+def _scene_baichuan(scenes):
+    from unittest.mock import AsyncMock
+
+    bc = Baichuan("192.0.2.1", "u", "p", http_api=MagicMock())
+    bc._scenes = dict(scenes)
+    bc.send = AsyncMock(return_value="")  # the wire: nothing leaves the test
+    bc.get_scene = AsyncMock(return_value=3)
+    return bc
+
+
+async def test_set_scene_still_blocked_and_switch_mode_is_the_only_way():
+    from camera_uploader.guard import set_listed_scene
+
+    install_read_only_guard()
+    bc = _scene_baichuan({-1: "off", 1: "Disarm", 2: "Home", 3: "Away"})
+
+    # set_scene itself stays blocked, by name, for us and for the library.
+    assert getattr(Baichuan.set_scene, MARK, False)
+    with pytest.raises(HubWriteBlocked, match="Baichuan.set_scene"):
+        await bc.set_scene(3)
+    with pytest.raises(HubWriteBlocked):
+        await bc.set_scene(scene_name="Away")
+    bc.send.assert_not_awaited()
+
+    # The narrow door: only an id the hub listed, and never "off" (-1).
+    for bad in (-1, 7, None, "3", True, 3.0):
+        with pytest.raises(HubWriteBlocked):
+            await set_listed_scene(bc, bad)
+    bc.send.assert_not_awaited()
+
+    await set_listed_scene(bc, 3)
+    bc.send.assert_awaited_once()
+    assert bc.send.await_args.kwargs["cmd_id"] == 602
+    assert "<curSceneId>3</curSceneId>" in bc.send.await_args.kwargs["body"]
+
+    # ... and the door did not open the guard: set_scene is still blocked afterwards.
+    assert getattr(Baichuan.set_scene, MARK, False)
+    with pytest.raises(HubWriteBlocked):
+        await bc.set_scene(2)
+    assert bc.send.await_count == 1

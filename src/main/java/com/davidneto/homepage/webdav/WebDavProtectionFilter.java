@@ -1,5 +1,6 @@
 package com.davidneto.homepage.webdav;
 
+import com.davidneto.homepage.cameras.ModeRequests;
 import com.davidneto.homepage.repository.WebDavUserRepository;
 import com.davidneto.homepage.security.LoginRateLimiter;
 import jakarta.servlet.FilterChain;
@@ -25,6 +26,10 @@ import java.util.Set;
  * <ul>
  *   <li>Nobody may write, move or copy onto {@value PerUserFileResourceFactory#VOLUME_MARKER}
  *       (it is what makes a folder protected, so users must not be able to create it).</li>
+ *   <li>Nobody may write, move, copy, delete, lock or change properties of
+ *       {@value ModeRequests#FILE} either: it switches the alarm hub's mode, and only the server
+ *       (on disk) may write it, so the Mac mini's upload password cannot disarm the house.
+ *       Reading it (GET/PROPFIND) stays allowed: that is how the uploader picks it up.</li>
  *   <li>In a protected folder, DELETE, MOVE and COPY are refused once the password has been
  *       verified. A wrong password, or an account/IP the login rate limiter currently blocks, is
  *       passed on to Milton for its normal 401 — so this filter reveals nothing (no account
@@ -63,6 +68,11 @@ public class WebDavProtectionFilter extends OncePerRequestFilter {
         if (!READ_ONLY.contains(method)
                 && (isMarker(decodedPath(request)) || isMarker(destinationPath(request)))) {
             forbid(response, method, request.getRequestURI(), null, "the volume marker cannot be written");
+            return;
+        }
+        if (!READ_ONLY.contains(method)
+                && (isModeRequest(decodedPath(request)) || isModeRequest(destinationPath(request)))) {
+            forbid(response, method, request.getRequestURI(), null, "the mode request cannot be written over WebDAV");
             return;
         }
 
@@ -135,16 +145,29 @@ public class WebDavProtectionFilter extends OncePerRequestFilter {
     }
 
     private static boolean isMarker(String path) {
+        return lastSegmentIs(path, PerUserFileResourceFactory.VOLUME_MARKER);
+    }
+
+    private static boolean isModeRequest(String path) {
+        return lastSegmentIs(path, ModeRequests.FILE);
+    }
+
+    /** Case-insensitive (a case-insensitive file system would resolve any spelling to the file). */
+    private static boolean lastSegmentIs(String path, String name) {
         if (path == null) return false;
         String p = path.endsWith("/") ? path.substring(0, path.length() - 1) : path;
         String last = p.substring(p.lastIndexOf('/') + 1);
-        return last.equalsIgnoreCase(PerUserFileResourceFactory.VOLUME_MARKER);
+        return last.equalsIgnoreCase(name);
     }
 
-    /** The servlet-decoded path (no %-escapes, no ;params) — the name Milton will actually use. */
+    /**
+     * The servlet-decoded path (no %-escapes, no ;params), each segment trimmed — the names Milton
+     * will actually use: it trims a new file's or folder's name (FsDirectoryResource uses
+     * String.trim), so "mode-request.json%20" would otherwise slip past and write mode-request.json.
+     */
     private static String decodedPath(HttpServletRequest request) {
         String info = request.getPathInfo();
-        return info != null ? info : request.getServletPath();
+        return trimSegments(info != null ? info : request.getServletPath());
     }
 
     private static String destinationPath(HttpServletRequest request) {
@@ -152,12 +175,20 @@ public class WebDavProtectionFilter extends OncePerRequestFilter {
         if (dest == null) return null;
         try {
             String path = URI.create(dest).getPath(); // decodes %-escapes
-            if (path == null) return dest;
+            if (path == null) return trimSegments(dest);
             int semi = path.indexOf(';');
-            return semi >= 0 ? path.substring(0, semi) : path;
+            return trimSegments(semi >= 0 ? path.substring(0, semi) : path);
         } catch (IllegalArgumentException e) {
-            return dest;
+            return trimSegments(dest);
         }
+    }
+
+    /** Each '/'-separated segment without leading/trailing control chars, spaces or other whitespace. */
+    static String trimSegments(String path) {
+        if (path == null) return null;
+        String[] parts = path.split("/", -1);
+        for (int i = 0; i < parts.length; i++) parts[i] = parts[i].trim().strip();
+        return String.join("/", parts);
     }
 
     private static void forbid(HttpServletResponse response, String method, String uri, String user, String why)

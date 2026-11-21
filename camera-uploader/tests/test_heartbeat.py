@@ -131,3 +131,42 @@ async def test_payload_has_mode_and_change_sends_early():
     hb.set_mode("away")
     assert await hb.maybe_send(dav, T0 + timedelta(seconds=20)) is True  # changed: sent at once
     assert dav.puts[-1][1]["mode"] == "away"
+
+
+async def test_mode_request_result_sent_at_once():
+    hb, dav = Heartbeat(300), Dav()
+    hb.record(True, None, 4, T0)
+    assert hb.payload(T0)["mode_request"] is None
+    await hb.maybe_send(dav, T0)
+    assert await hb.maybe_send(dav, T0 + timedelta(seconds=10)) is False  # nothing new: rate-limited
+    result = {"id": "req-1", "status": "applied", "error": None, "at": "2026-11-20T12:00:20+01:00"}
+    hb.set_mode_request_result(result)
+    assert await hb.maybe_send(dav, T0 + timedelta(seconds=20)) is True  # new result: sent at once
+    assert dav.puts[-1][1]["mode_request"] == result
+    hb.set_mode_request_result(dict(result))  # the same result again: no extra send
+    assert await hb.maybe_send(dav, T0 + timedelta(seconds=30)) is False
+    failed = {"id": "req-2", "status": "failed", "error": "hub refused", "at": "2026-11-20T12:00:40+01:00"}
+    hb.set_mode_request_result(failed)
+    assert await hb.maybe_send(dav, T0 + timedelta(seconds=40)) is True
+    assert dav.puts[-1][1]["mode_request"] == failed
+
+
+async def test_sent_state_is_what_was_sent():
+    # A result set while a (background) heartbeat PUT is in flight was not in that PUT:
+    # the next maybe_send must still send it, not think it already went out.
+    hb = Heartbeat(300)
+    hb.record(True, None, 4, T0)
+    result = {"id": "req-1", "status": "applied", "error": None, "at": "2026-11-20T12:00:20+01:00"}
+
+    class SlowDav(Dav):
+        async def put_bytes(self, path, data, content_type):
+            await super().put_bytes(path, data, content_type)
+            if len(self.puts) == 1:
+                hb.set_mode_request_result(result)  # the cycle reports while this PUT is in flight
+                hb.set_mode("away")
+
+    dav = SlowDav()
+    assert await hb.maybe_send(dav, T0) is True
+    assert dav.puts[0][1]["mode_request"] is None
+    assert await hb.maybe_send(dav, T0 + timedelta(seconds=1)) is True
+    assert dav.puts[1][1]["mode_request"] == result and dav.puts[1][1]["mode"] == "away"

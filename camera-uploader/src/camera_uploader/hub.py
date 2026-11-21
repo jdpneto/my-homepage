@@ -13,7 +13,8 @@ from reolink_aio.exceptions import CredentialsInvalidError, ReolinkError
 from reolink_aio.typings import VOD_trigger
 
 from .config import Config
-from .guard import HubWriteBlocked, install_read_only_guard
+from .guard import HubWriteBlocked, install_read_only_guard, set_listed_scene
+from .mode_request import SWITCHABLE
 from .model import Clip
 
 log = logging.getLogger(__name__)
@@ -22,6 +23,7 @@ SEARCH_TIMEOUT = 120
 DOWNLOAD_TIMEOUT = 300
 CONNECT_TIMEOUT = 60
 MODE_TIMEOUT = 15
+SWITCH_TIMEOUT = 30
 
 
 class HubError(Exception):
@@ -30,6 +32,10 @@ class HubError(Exception):
 
 class HubAuthError(HubError):
     """The hub rejected the username/password. Retry slowly: the hub locks out repeated failures."""
+
+
+class ModeSwitchError(Exception):
+    """A mode switch was not done; the message is a short reason for the page ("hub refused", ...)."""
 
 
 def clips_from_search(channel: int, camera_name: str, camera_id: str, vod_by_trigger: dict) -> list[Clip]:
@@ -104,6 +110,52 @@ class ReolinkHub:
         if not isinstance(name, str) or not name or name == UNKNOWN:
             return None
         return name.lower()
+
+    async def switch_mode(self, name: str, not_after: datetime | None = None) -> None:
+        """Make the hub's mode `name` ("disarm", "home" or "away") active - the uploader's only hub write.
+
+        Goes through guard.set_listed_scene: only a scene the hub listed with an id >= 0.
+        Raises ModeSwitchError with a short reason; nothing is written when the mode is unknown,
+        or when this Mac's clock has reached `not_after` (aware) by the time of the write.
+        """
+        wanted = name.strip().lower() if isinstance(name, str) else ""
+        if wanted not in SWITCHABLE:
+            raise ModeSwitchError("unknown mode")
+        if self._host is None:
+            raise ModeSwitchError("hub not connected")
+        bc = self._host.baichuan
+        scene_id = self._listed_scene_id(bc, wanted)
+        if scene_id is None and any(n == UNKNOWN for i, n in self._scenes(bc).items() if i >= 0):
+            await self._load_mode_names(self._host)  # names not loaded at connect: try once more
+            scene_id = self._listed_scene_id(bc, wanted)
+        if scene_id is None:
+            raise ModeSwitchError("unknown mode")
+        # Re-checked right before the write: reloading the names above can take a while.
+        if not_after is not None and datetime.now().astimezone() >= not_after:
+            raise ModeSwitchError("expired before pickup")
+        try:
+            await asyncio.wait_for(set_listed_scene(bc, scene_id), SWITCH_TIMEOUT)
+        except HubWriteBlocked as exc:
+            raise ModeSwitchError("unknown mode") from exc
+        except asyncio.TimeoutError as exc:
+            log.warning("switching the hub to %s timed out", wanted)
+            raise ModeSwitchError("hub timed out") from exc
+        except Exception as exc:
+            log.warning("the hub refused to switch to %s: %s: %s", wanted, type(exc).__name__, exc)
+            raise ModeSwitchError("hub refused") from exc
+        log.info("switched the hub to %s (scene %s)", wanted, scene_id)
+
+    @staticmethod
+    def _scenes(bc) -> dict:
+        scenes = getattr(bc, "_scenes", None)
+        return scenes if isinstance(scenes, dict) else {}
+
+    @classmethod
+    def _listed_scene_id(cls, bc, wanted: str) -> int | None:
+        """The id >= 0 of the one scene the hub lists under `wanted`; None if none (or ambiguous)."""
+        ids = [i for i, n in cls._scenes(bc).items()
+               if type(i) is int and i >= 0 and isinstance(n, str) and n.strip().lower() == wanted]
+        return ids[0] if len(ids) == 1 else None
 
     async def now(self) -> datetime:
         """The hub's own local wall-clock time (naive), the clock its clip timestamps use."""

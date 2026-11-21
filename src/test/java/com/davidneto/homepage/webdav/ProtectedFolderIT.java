@@ -74,6 +74,7 @@ class ProtectedFolderIT {
         // Other ITs delete every user in their setup; unprotect first so they still can.
         Files.deleteIfExists(Path.of(webdavRoot, "cameras", "volume-marker.txt"));
         Files.deleteIfExists(Path.of(webdavRoot, "plain", "volume-marker.txt"));
+        Files.deleteIfExists(Path.of(webdavRoot, "cameras", "mode-request.json"));
         users.list().stream().filter(u -> u.getUsername().equals("cameras") || u.getUsername().equals("plain"))
                 .forEach(u -> users.delete(u.getId()));
         limiter.resetAllForTesting();
@@ -217,6 +218,82 @@ class ProtectedFolderIT {
                 "Destination", "http://localhost:" + port + "/webdav/volume-marker.txt").statusCode()).isEqualTo(403);
         assertThat(dav("PUT", "volume-marker.txt", "cameras", "cameras-password-1", "x").statusCode()).isEqualTo(403);
         assertThat(Files.readString(camerasRoot.resolve("volume-marker.txt"))).startsWith("camera clips live");
+    }
+
+    /** The mode request switches the alarm hub: only the server (on disk) may write it, never WebDAV. */
+    @Test
+    void webdavCannotWriteModeRequest() throws Exception {
+        String original = "{\"id\":\"r1\",\"mode\":\"home\"}";
+        Path request = camerasRoot.resolve("mode-request.json");
+        Files.writeString(request, original);
+        Files.write(camerasRoot.resolve("Garage/2026-11-18/other.mp4"), new byte[]{9});
+        String forged = "{\"id\":\"r2\",\"mode\":\"disarm\"}";
+        String dest = "http://localhost:" + port + "/webdav/";
+
+        for (String name : new String[]{"mode-request.json", "Mode-Request.json", "MODE-REQUEST.JSON", "mode%2Drequest.json"}) {
+            assertThat(dav("PUT", name, "cameras", "cameras-password-1", forged).statusCode()).as("PUT " + name).isEqualTo(403);
+            assertThat(dav("MOVE", "Garage/2026-11-18/other.mp4", "cameras", "cameras-password-1", null,
+                    "Destination", dest + name, "Overwrite", "T").statusCode()).as("MOVE onto " + name).isEqualTo(403);
+            assertThat(dav("COPY", "Garage/2026-11-18/other.mp4", "cameras", "cameras-password-1", null,
+                    "Destination", dest + name, "Overwrite", "T").statusCode()).as("COPY onto " + name).isEqualTo(403);
+            assertThat(dav("DELETE", name, "cameras", "cameras-password-1", null).statusCode()).as("DELETE " + name).isEqualTo(403);
+            assertThat(dav("MOVE", name, "cameras", "cameras-password-1", null,
+                    "Destination", dest + "moved.json").statusCode()).as("MOVE away " + name).isEqualTo(403);
+            assertThat(dav("PROPPATCH", name, "cameras", "cameras-password-1", "<x/>").statusCode()).as("PROPPATCH " + name).isEqualTo(403);
+            assertThat(dav("LOCK", name, "cameras", "cameras-password-1", "<x/>").statusCode()).as("LOCK " + name).isEqualTo(403);
+        }
+        // Any WebDAV user, not only the camera one.
+        assertThat(dav("PUT", "mode-request.json", "plain", "plain-password-1", forged).statusCode()).isEqualTo(403);
+        assertThat(plainRoot.resolve("mode-request.json")).doesNotExist();
+
+        assertThat(Files.readString(request)).isEqualTo(original);
+        assertThat(camerasRoot.resolve("moved.json")).doesNotExist();
+        // The uploader still reads it.
+        HttpResponse<String> read = dav("GET", "mode-request.json", "cameras", "cameras-password-1", null);
+        assertThat(read.statusCode()).isEqualTo(200);
+        assertThat(read.body()).isEqualTo(original);
+    }
+
+    @Test
+    void whitespacePaddedNamesAreRefused() throws Exception {
+        // Milton trims a new file's name (String.trim), so "mode-request.json " writes mode-request.json.
+        String original = "{\"id\":\"r1\",\"mode\":\"home\"}";
+        Path request = camerasRoot.resolve("mode-request.json");
+        Files.writeString(request, original);
+        Files.write(camerasRoot.resolve("Garage/2026-11-18/other.mp4"), new byte[]{9});
+        String forged = "{\"id\":\"r2\",\"mode\":\"disarm\"}";
+        String dest = "http://localhost:" + port + "/webdav/";
+        for (String name : new String[]{"mode-request.json%20", "mode-request.json%09", "%20mode-request.json",
+                "%09%20mode-request.json%20%09", "MODE-REQUEST.JSON%20", "mode-request.json%0B"}) {
+            assertThat(dav("PUT", name, "cameras", "cameras-password-1", forged).statusCode()).as("PUT " + name).isEqualTo(403);
+            assertThat(dav("PUT", name, "plain", "plain-password-1", forged).statusCode()).as("plain PUT " + name).isEqualTo(403);
+            assertThat(dav("MOVE", "Garage/2026-11-18/other.mp4", "cameras", "cameras-password-1", null,
+                    "Destination", dest + name, "Overwrite", "T").statusCode()).as("MOVE onto " + name).isEqualTo(403);
+            assertThat(dav("COPY", "Garage/2026-11-18/other.mp4", "cameras", "cameras-password-1", null,
+                    "Destination", dest + name, "Overwrite", "T").statusCode()).as("COPY onto " + name).isEqualTo(403);
+            assertThat(dav("MKCOL", name, "cameras", "cameras-password-1", null).statusCode()).as("MKCOL " + name).isEqualTo(403);
+        }
+        assertThat(Files.readString(request)).isEqualTo(original);
+        assertThat(plainRoot.resolve("mode-request.json")).doesNotExist();
+
+        // The volume marker: nobody may create it (that is what makes a folder protected).
+        for (String name : new String[]{"volume-marker.txt%20", "%20volume-marker.txt", "VOLUME-MARKER.TXT%09"}) {
+            assertThat(dav("PUT", name, "plain", "plain-password-1", "fake").statusCode()).as("PUT " + name).isEqualTo(403);
+        }
+        assertThat(plainRoot.resolve("volume-marker.txt")).doesNotExist();
+
+        // Keep markers and kept clips in a protected folder.
+        assertThat(dav("PUT", "Garage/2026-11-18/21-45-49.keep%20", "cameras", "cameras-password-1", "x")
+                .statusCode()).isEqualTo(403);
+        assertThat(dav("MKCOL", "Garage/2026-11-18/21-45-49.keep%09", "cameras", "cameras-password-1", null)
+                .statusCode()).isEqualTo(403);
+        assertThat(camerasRoot.resolve("Garage/2026-11-18/21-45-49.keep")).doesNotExist();
+        assertThat(dav("PUT", "Garage/2026-11-18/21-45-49.mp4%20", "cameras", "cameras-password-1", "")
+                .statusCode()).as("empty PUT over an existing clip").isEqualTo(403);
+        Files.createFile(camerasRoot.resolve("Garage/2026-11-18/21-45-49.keep"));
+        assertThat(dav("PUT", "Garage/2026-11-18/21-45-49.mp4%20", "cameras", "cameras-password-1", "junk")
+                .statusCode()).as("PUT over a kept clip").isEqualTo(403);
+        assertThat(Files.readAllBytes(clip)).containsExactly(1, 2, 3);
     }
 
     @Test

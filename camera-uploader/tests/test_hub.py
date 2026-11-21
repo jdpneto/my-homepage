@@ -159,3 +159,80 @@ async def test_mode_name_missing_at_connect_is_read_on_demand(config_path):
     hub = ReolinkHub(load_config(config_path))
     hub._host = SimpleNamespace(baichuan=bc)
     assert await hub.mode() == "away"
+
+
+# --- remote mode switch ---------------------------------------------------------
+
+def _switch_hub(config_path, scenes):
+    from unittest.mock import AsyncMock, MagicMock
+
+    from reolink_aio.baichuan.baichuan import Baichuan
+
+    from camera_uploader.config import load_config
+    from camera_uploader.guard import install_read_only_guard
+
+    install_read_only_guard()
+    bc = Baichuan("192.0.2.1", "u", "p", http_api=MagicMock())
+    bc._scenes = dict(scenes)
+    bc.send = AsyncMock(return_value="")
+    bc.get_scene = AsyncMock(return_value=3)
+    bc.get_scene_info = AsyncMock()
+    hub = ReolinkHub(load_config(config_path))
+    hub._host = SimpleNamespace(baichuan=bc)
+    return hub, bc
+
+
+async def test_switch_mode_calls_original_set_scene_with_listed_id(config_path):
+    hub, bc = _switch_hub(config_path, {-1: "off", 1: "Disarm", 2: "Home", 3: "Away"})
+    await hub.switch_mode("away")
+    bc.send.assert_awaited_once()
+    assert bc.send.await_args.kwargs["cmd_id"] == 602
+    assert "<curSceneId>3</curSceneId>" in bc.send.await_args.kwargs["body"]
+    await hub.switch_mode("Home")
+    assert "<curSceneId>2</curSceneId>" in bc.send.await_args.kwargs["body"]
+
+
+async def test_switch_mode_refuses_off_and_unlisted(config_path):
+    from camera_uploader.hub import ModeSwitchError
+
+    hub, bc = _switch_hub(config_path, {-1: "off", 1: "Disarm", 2: "Home", 9: "Away"})
+    for name in ("off", "OFF", "party", "", "away; reboot"):
+        with pytest.raises(ModeSwitchError, match="unknown mode"):
+            await hub.switch_mode(name)
+    # A negative id with a switchable name is still never selected.
+    hub2, bc2 = _switch_hub(config_path, {-1: "Away", 2: "Home"})
+    with pytest.raises(ModeSwitchError, match="unknown mode"):
+        await hub2.switch_mode("away")
+    # A switchable name the hub did not list.
+    hub3, bc3 = _switch_hub(config_path, {-1: "off", 2: "Home"})
+    with pytest.raises(ModeSwitchError, match="unknown mode"):
+        await hub3.switch_mode("disarm")
+    for b in (bc, bc2, bc3):
+        b.send.assert_not_awaited()
+    # Not connected.
+    hub4 = ReolinkHub(hub._cfg)
+    with pytest.raises(ModeSwitchError, match="hub not connected"):
+        await hub4.switch_mode("away")
+
+
+async def test_switch_mode_hub_error_is_a_short_reason(config_path):
+    from camera_uploader.hub import ModeSwitchError
+
+    hub, bc = _switch_hub(config_path, {1: "Disarm", 2: "Home", 3: "Away"})
+    bc.send.side_effect = ReolinkConnectionError("socket closed")
+    with pytest.raises(ModeSwitchError, match="hub refused"):
+        await hub.switch_mode("away")
+
+
+async def test_switch_mode_rechecks_expiry_before_the_write(config_path):
+    from datetime import timedelta, timezone
+
+    from camera_uploader.hub import ModeSwitchError
+
+    hub, bc = _switch_hub(config_path, {1: "Disarm", 2: "Home", 3: "Away"})
+    past = datetime.now(timezone.utc) - timedelta(seconds=1)
+    with pytest.raises(ModeSwitchError, match="expired before pickup"):
+        await hub.switch_mode("away", not_after=past)
+    bc.send.assert_not_awaited()
+    await hub.switch_mode("away", not_after=datetime.now(timezone.utc) + timedelta(minutes=1))
+    bc.send.assert_awaited_once()

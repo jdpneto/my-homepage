@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "camera-uploader"
-version = "0.2.0"
+version = "0.3.0"
 description = "Copies Reolink Home Hub motion clips to the VPS over WebDAV"
 requires-python = ">=3.13"
 dependencies = [

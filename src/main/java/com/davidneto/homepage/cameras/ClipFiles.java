@@ -154,6 +154,30 @@ public class ClipFiles {
         }
     }
 
+    /** The uploader's answer to a mode request (heartbeat {@code mode_request}). */
+    public record ModeRequestResult(String id, String status, String error) {
+    }
+
+    /**
+     * The heartbeat's {@code mode_request}, when it names an id and a status of
+     * {@code applied} or {@code failed}. The error is cut to one short line.
+     */
+    public Optional<ModeRequestResult> modeRequestResult() {
+        return readHeartbeat().flatMap(hb -> {
+            JsonNode r = hb.get("mode_request");
+            if (r == null || !r.isObject()) return Optional.empty();
+            String id = textOrNull(r.get("id"));
+            String status = textOrNull(r.get("status"));
+            if (id == null || !("applied".equals(status) || "failed".equals(status))) return Optional.empty();
+            String error = textOrNull(r.get("error"));
+            if (error != null) {
+                error = error.replaceAll("\\p{Cntrl}", " ").strip();
+                if (error.length() > 120) error = error.substring(0, 120) + "…";
+            }
+            return Optional.of(new ModeRequestResult(id, status, error));
+        });
+    }
+
     /** Path for a stem + suffix; refuses anything outside the layout or the root. */
     private Path resolve(String stem, String suffix) {
         if (stem == null || !STEM.matcher(stem).matches()) {

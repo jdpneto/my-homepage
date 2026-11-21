@@ -5,4 +5,8 @@ public class VolumeUnavailableException extends RuntimeException {
     public VolumeUnavailableException() {
         super("camera volume not available — nothing was deleted");
     }
+
+    public VolumeUnavailableException(String message) {
+        super(message);
+    }
 }

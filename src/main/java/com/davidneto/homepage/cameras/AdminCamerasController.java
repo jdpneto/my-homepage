@@ -29,11 +29,13 @@ public class AdminCamerasController {
     private final ClipService clips;
     private final AlertMute mute;
     private final Clock clock;
+    private final ModeRequests modeRequests;
 
-    public AdminCamerasController(ClipService clips, AlertMute mute, Clock clock) {
+    public AdminCamerasController(ClipService clips, AlertMute mute, Clock clock, ModeRequests modeRequests) {
         this.clips = clips;
         this.mute = mute;
         this.clock = clock;
+        this.modeRequests = modeRequests;
     }
 
     @GetMapping
@@ -68,6 +70,13 @@ public class AdminCamerasController {
                 + size(status.unkeptBytes()) + " · Free " + size(free));
         model.addAttribute("storageLevel", level(status));
         model.addAttribute("healthText", health(status, now));
+        // Mode switch: the hub's mode from the heartbeat highlights its button; a mode with no
+        // button (e.g. "off") is named beside them. A pending request lets the script resume polling.
+        String mode = status.hubMode() == null ? null : status.hubMode().trim().toLowerCase(Locale.ROOT);
+        model.addAttribute("hubMode", mode);
+        model.addAttribute("hubModeOther", mode != null && ModeRequests.normalise(mode) == null ? mode : null);
+        ModeRequests.RequestStatus request = modeRequests.state().request();
+        model.addAttribute("modePending", request != null && request.pending() ? request : null);
         // Show times in the cameras' own offset (the server runs in UTC): the newest clip of any
         // camera, never the filtered list (which can be empty or months old). The browser
         // re-renders it in its own time zone from data-until anyway.
@@ -120,12 +129,12 @@ public class AdminCamerasController {
         return s.warnings().isEmpty() ? "ok" : "amber";
     }
 
+    /** Uploader and hub; the hub's mode is shown by the mode switch next to it. */
     private static String health(StorageStatus s, OffsetDateTime now) {
         String uploader = s.heartbeatAt() == null ? "Uploader: no heartbeat yet"
                 : "Uploader: last heartbeat " + ago(Duration.between(s.heartbeatAt(), now));
         String hub = s.hubOk() == null ? "Hub unknown" : s.hubOk() ? "Hub OK" : "Hub DOWN";
-        String mode = s.hubMode() == null || s.hubMode().isBlank() ? "" : " · mode: " + s.hubMode();
-        return uploader + " · " + hub + mode;
+        return uploader + " · " + hub;
     }
 
     static String ago(Duration d) {

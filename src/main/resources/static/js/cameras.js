@@ -10,10 +10,13 @@
  * span.day-meta, button.day-select, button.day-delete) followed by its ul.clip-list.
  * Select mode: button#select-toggle (filter row), div#select-bar with #select-count,
  * #select-delete, #select-cancel.
+ * Mode switch: div#mode-switch (data-current, and data-pending-id / data-pending-mode while
+ * a request is pending) with button[data-mode="disarm|home|away"][aria-pressed],
+ * span.cam-mode-other (a mode with no button, e.g. "off") and span#mode-status (role=status).
  *
  * API used (all under /api/cameras/): clips (paged list), clips/{id} (+ /video, /thumb,
  * /download, /keep), clips/delete (bulk, explicit ids), auth/revoke-all, alerts/test,
- * alerts/mute, status (signed-in probe, storage line).
+ * alerts/mute, mode (switch request + its status), status (signed-in probe, storage line).
  *
  * Data from the server only ever reaches the DOM through textContent / attributes.
  *
@@ -1386,6 +1389,179 @@
             failed('Test alert', err);
         }
     });
+
+    // ---------------------------------------------------------------- mode switch
+
+    // Disarm / Home / Away. A tap writes a request (POST /mode) that the Mac mini applies within
+    // a cycle; #mode-status follows it with GET /mode every 3 s while pending (at most 7 min):
+    // "Switching to away…" → "Away ✓" / "Not applied: <reason>" / "Expired — …". aria-pressed
+    // follows the hub's mode as the heartbeat reports it, never the tap alone. Disarm asks first,
+    // like Delete: the first tap arms "Yes, disarm" for 4 s, a separate second tap sends it.
+    const modeSwitch = document.getElementById('mode-switch');
+    if (modeSwitch) {
+        const MODE_POLL_MS = 3000;
+        const MODE_POLL_MAX_MS = 7 * 60 * 1000; // past expires_at (5 min) + the server's 1 min grace
+        const MODE_LABELS = { disarm: 'Disarm', home: 'Home', away: 'Away' };
+        const MODE_EXPIRED = "Expired — the Mac mini didn't pick it up";
+        const MODE_UNCHECKED = "Couldn't check the switch — reload to see it";
+        const modeButtons = Array.from(modeSwitch.querySelectorAll('button[data-mode]'));
+        const modeStatus = document.getElementById('mode-status');
+        const modeOther = modeSwitch.querySelector('.cam-mode-other');
+        const disarmBtn = modeSwitch.querySelector('button[data-mode="disarm"]');
+        const disarmLabel = disarmBtn ? disarmBtn.textContent : '';
+        let disarmArmedAt = 0;
+        let disarmTimer = 0;
+        let pollTimer = 0;
+        let pollId = null;   // id of the request being followed
+        let pollUntil = 0;
+
+        const isModeName = m => Object.prototype.hasOwnProperty.call(MODE_LABELS, m);
+
+        /** Highlights the hub's mode; an unknown (null) mode leaves what is shown. */
+        function renderCurrent(mode) {
+            if (typeof mode !== 'string' || !mode.trim()) return;
+            const m = mode.trim().toLowerCase();
+            modeSwitch.dataset.current = m;
+            modeButtons.forEach(b => b.setAttribute('aria-pressed', b.dataset.mode === m ? 'true' : 'false'));
+            if (modeOther) {
+                modeOther.textContent = isModeName(m) ? '' : '(now ' + m + ')';
+                modeOther.hidden = isModeName(m);
+            }
+        }
+
+        /** Status text, announced only when it changes (polls repeat the same pending text). */
+        function setModeStatus(text, state) {
+            if (!modeStatus) return;
+            modeStatus.dataset.state = state || '';
+            if (modeStatus.dataset.text === text) return;
+            modeStatus.dataset.text = text;
+            if (text) speak(modeStatus, text);
+            else silence(modeStatus);
+        }
+
+        function renderRequest(r, current) {
+            renderCurrent(current || (r && r.status === 'applied' ? r.mode : null));
+            if (!r) return;
+            const mode = String(r.mode || '');
+            if (r.status === 'pending') {
+                setModeStatus('Switching to ' + mode + '…', 'pending');
+            } else if (r.status === 'applied') {
+                setModeStatus((MODE_LABELS[mode] || mode) + ' ✓', 'applied');
+            } else if (r.status === 'failed') {
+                setModeStatus('Not applied: ' + (r.error ? String(r.error) : 'unknown reason'), 'failed');
+            } else if (r.status === 'expired') {
+                setModeStatus(MODE_EXPIRED, 'expired');
+            }
+        }
+
+        function stopPolling() {
+            clearTimeout(pollTimer);
+            pollTimer = 0;
+            pollId = null;
+        }
+
+        function follow(id) {
+            stopPolling();
+            pollId = id;
+            pollUntil = performance.now() + MODE_POLL_MAX_MS;
+            pollTimer = setTimeout(poll, MODE_POLL_MS);
+        }
+
+        async function poll() {
+            pollTimer = 0;
+            const id = pollId;
+            if (!id) return;
+            let s = null;
+            try {
+                s = await api('/mode');
+            } catch (err) {
+                if (id !== pollId) return;
+                // Signed out (banner shown) or offline (toast shown): stop, do not repeat it every 3 s.
+                if (!(err instanceof ApiError) || err.handled) {
+                    stopPolling();
+                    setModeStatus(MODE_UNCHECKED, 'failed');
+                    return;
+                }
+                // Anything else (e.g. a 5xx while the server restarts): try again next time.
+            }
+            if (id !== pollId) return; // a newer tap took over
+            if (s) {
+                const r = s.request;
+                if (r && r.id !== id) pollId = r.id; // replaced from another device: follow that one
+                renderRequest(r, s.current);
+                if (!r || r.status !== 'pending') {
+                    stopPolling();
+                    if (!r) setModeStatus('', '');
+                    return;
+                }
+            }
+            if (performance.now() >= pollUntil) {
+                stopPolling();
+                setModeStatus(MODE_UNCHECKED, 'failed');
+                return;
+            }
+            pollTimer = setTimeout(poll, MODE_POLL_MS);
+        }
+
+        async function requestMode(mode) {
+            stopPolling();
+            try {
+                const r = await api('/mode', 'POST', { mode: mode });
+                if (!r || !r.id) throw new Error('No request id in the answer');
+                renderRequest({ id: r.id, mode: r.mode || mode, status: 'pending' }, null);
+                follow(r.id);
+            } catch (err) {
+                if (err instanceof ApiError && err.status === 503) {
+                    setModeStatus('Not sent — the camera volume is missing', 'failed');
+                } else if (err instanceof ApiError && err.status === 400) {
+                    setModeStatus('Not sent — unknown mode', 'failed');
+                } else {
+                    setModeStatus('', '');
+                    failed('Switching mode', err);
+                }
+            }
+        }
+
+        function disarmDisarm() {
+            if (!disarmBtn) return;
+            clearTimeout(disarmTimer);
+            disarmArmedAt = 0;
+            disarmBtn.textContent = disarmLabel;
+            disarmBtn.classList.remove('confirm');
+        }
+
+        modeSwitch.addEventListener('click', e => {
+            const btn = e.target.closest('button[data-mode]');
+            if (!btn || !modeSwitch.contains(btn)) return;
+            // One switch at a time; quiet after a send (no double-tap repeats).
+            if (modeButtons.some(isBusy) || isQuiet(btn)) return;
+            const mode = btn.dataset.mode;
+            if (!isModeName(mode)) return;
+            if (mode === 'disarm') {
+                if (!disarmArmedAt) {
+                    disarmArmedAt = performance.now();
+                    btn.textContent = 'Yes, disarm';
+                    btn.classList.add('confirm');
+                    disarmTimer = setTimeout(disarmDisarm, CONFIRM_MS);
+                    return;
+                }
+                // The other half of a double-click/double-tap: stays armed.
+                if (performance.now() - disarmArmedAt < CONFIRM_MIN_MS) return;
+            }
+            disarmDisarm();
+            guarded(btn, () => requestMode(mode));
+        });
+        // A held Enter repeats clicks: never let the repeat arm and then confirm Disarm.
+        modeSwitch.addEventListener('keydown', e => {
+            if (e.repeat && (e.key === 'Enter' || e.key === ' ')) e.preventDefault();
+        });
+
+        // A request still pending when the page loaded: keep following it.
+        if (modeSwitch.dataset.pendingId) {
+            renderRequest({ id: modeSwitch.dataset.pendingId, mode: modeSwitch.dataset.pendingMode, status: 'pending' }, null);
+            follow(modeSwitch.dataset.pendingId);
+        }
+    }
 
     // ---------------------------------------------------------------- alerts switch
 

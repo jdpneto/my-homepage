@@ -11,6 +11,9 @@
  *   button[aria-disabled="true"]         request in flight (not `disabled`: keeps focus)
  *   .cam-toast:empty                     toast hidden (it stays in the a11y tree)
  *   .cam-toast.error / .cam-banner.info  colour variants
+ *   #mode-switch button[aria-pressed]    the hub's current mode
+ *   #mode-switch button.confirm          Disarm armed ("Yes, disarm")
+ *   #mode-status[data-state]             pending | applied | failed | expired
  */
 
 /* Read by screen readers, not shown (page h1, the player's live region). */
@@ -63,6 +66,7 @@ body > .nav > div {
 
 /* Shared button look for the page: outlined, monospace, green. */
 .cam-controls button,
+.cam-mode button,
 .player-bar button,
 .player-bar a,
 .player-close {
@@ -91,6 +95,7 @@ body > .nav > div {
  * such as .active or .confirm still win) inside its own (hover: hover). */
 @media (hover: hover) {
     .cam-controls button:hover,
+    .cam-mode button:hover,
     .player-bar button:hover,
     .player-bar a:hover,
     .player-close:hover {
@@ -103,6 +108,7 @@ body > .nav > div {
 .cam-controls button:disabled,
 .player-bar button:disabled,
 .cam-controls button[aria-disabled="true"],
+.cam-mode button[aria-disabled="true"],
 .player-bar button[aria-disabled="true"] {
     opacity: 0.4;
     cursor: not-allowed;
@@ -1429,5 +1435,91 @@ body:has(#clips.selecting) .cam-toast {
 
     #select-count {
         font-size: 13px;
+    }
+}
+
+/* === Mode switch (in the storage panel, beside the health line) ===
+ * "Mode: [Disarm] [Home] [Away]" plus the request status. The hub's mode is
+ * filled green; an armed Disarm looks like the armed Delete. */
+.cam-health-row {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 4px 16px;
+    margin-top: 2px;
+}
+
+.cam-health-row .cam-health {
+    margin-top: 0;
+}
+
+.cam-mode {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 6px;
+    font-size: 13px;
+}
+
+.cam-mode-label {
+    color: var(--text-secondary);
+}
+
+.cam-mode button {
+    padding: 2px 12px;
+    min-height: 30px;
+}
+
+.cam-mode button[aria-pressed="true"] {
+    color: var(--bg);
+    background: var(--accent);
+    border-color: var(--accent);
+    font-weight: bold;
+}
+
+.cam-mode button.confirm {
+    color: var(--bg);
+    background: var(--red);
+    border-color: var(--red);
+    font-weight: bold;
+}
+
+.cam-mode-other {
+    color: var(--amber);
+}
+
+/* Stays in the a11y tree (role=status); hidden only while empty. */
+.cam-mode-status:empty {
+    display: none;
+}
+
+.cam-mode-status {
+    color: var(--text-secondary);
+}
+
+.cam-mode-status[data-state="applied"] {
+    color: var(--accent);
+}
+
+.cam-mode-status[data-state="failed"],
+.cam-mode-status[data-state="expired"] {
+    color: var(--amber);
+}
+
+/* Same touch rule as the other buttons (after the compact size above, so it wins). */
+@media (any-pointer: coarse), (max-width: 600px) {
+    .cam-mode button {
+        min-height: var(--tap);
+    }
+}
+
+@media (max-width: 600px) {
+    .cam-health-row {
+        gap: 2px 12px;
+    }
+
+    .cam-mode {
+        font-size: 12px;
+        padding-bottom: 4px;
     }
 }

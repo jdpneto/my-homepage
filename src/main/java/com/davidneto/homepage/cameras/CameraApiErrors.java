@@ -7,7 +7,7 @@ import org.springframework.web.bind.annotation.RestControllerAdvice;
 
 import java.util.Map;
 
-@RestControllerAdvice(assignableTypes = {CameraApiController.class, CameraAlertsController.class})
+@RestControllerAdvice(assignableTypes = {CameraApiController.class, CameraAlertsController.class, CameraModeController.class})
 public class CameraApiErrors {
 
     @ExceptionHandler(ClipNotFoundException.class)

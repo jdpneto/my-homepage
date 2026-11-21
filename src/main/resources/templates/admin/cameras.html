@@ -18,7 +18,22 @@
 
     <section id="storage" class="cam-storage" th:classappend="'level-' + ${storageLevel}">
         <div class="cam-storage-line" th:text="${storageText}">Kept 1.2 GB · Last 30 days 2.1 GB · Free 9.8 GB</div>
-        <div class="cam-health" th:text="${healthText}">Uploader: last heartbeat 3 min ago · Hub OK</div>
+        <div class="cam-health-row">
+            <div class="cam-health" th:text="${healthText}">Uploader: last heartbeat 3 min ago · Hub OK</div>
+            <!-- Mode switch: the hub's mode (last heartbeat) is aria-pressed. A tap asks the Mac
+                 mini to switch (POST /api/cameras/mode); #mode-status follows the request.
+                 data-pending-* are set while a request is pending, so a reload keeps following it. -->
+            <div id="mode-switch" class="cam-mode" role="group" aria-labelledby="mode-label"
+                 th:attr="data-current=${hubMode},data-pending-id=${modePending?.id},data-pending-mode=${modePending?.mode}">
+                <span id="mode-label" class="cam-mode-label">Mode:</span>
+                <button type="button" data-mode="disarm" th:attr="aria-pressed=${hubMode == 'disarm'}">Disarm</button>
+                <button type="button" data-mode="home" th:attr="aria-pressed=${hubMode == 'home'}">Home</button>
+                <button type="button" data-mode="away" th:attr="aria-pressed=${hubMode == 'away'}">Away</button>
+                <span class="cam-mode-other" th:hidden="${hubModeOther == null}"
+                      th:text="${hubModeOther != null} ? '(now ' + ${hubModeOther} + ')' : ''">(now off)</span>
+                <span id="mode-status" class="cam-mode-status" role="status"></span>
+            </div>
+        </div>
         <ul class="cam-warnings" th:if="${not #lists.isEmpty(status.warnings)}">
             <li th:each="w : ${status.warnings}" th:text="${w}">camera quota 90% used</li>
         </ul>

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import sqlite3
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -89,6 +90,33 @@ class StateStore:
             self._db.execute(
                 "INSERT INTO meta (name, value) VALUES ('watermark', ?) "
                 "ON CONFLICT(name) DO UPDATE SET value=excluded.value", (dt.isoformat(),))
+
+    def get_applied_mode_request(self) -> str | None:
+        """Id of the last mode request handled (applied, failed or expired): never handled twice."""
+        return self._get_meta("mode_request_id")
+
+    def get_mode_request_result(self) -> dict | None:
+        """The heartbeat's `mode_request` for that request, kept across restarts."""
+        value = self._get_meta("mode_request_result")
+        return json.loads(value) if value else None
+
+    def set_applied_mode_request(self, request_id: str, result: dict | None = None) -> None:
+        """Remember `request_id` as handled (before the hub write), and later its result."""
+        with self._txn():
+            self._set_meta("mode_request_id", request_id)
+            if result is None:
+                self._db.execute("DELETE FROM meta WHERE name = 'mode_request_result'")
+            else:
+                self._set_meta("mode_request_result", json.dumps(result))
+
+    def _get_meta(self, name: str) -> str | None:
+        row = self._db.execute("SELECT value FROM meta WHERE name = ?", (name,)).fetchone()
+        return row[0] if row else None
+
+    def _set_meta(self, name: str, value: str) -> None:
+        self._db.execute(
+            "INSERT INTO meta (name, value) VALUES (?, ?) "
+            "ON CONFLICT(name) DO UPDATE SET value=excluded.value", (name, value))
 
     def _txn(self):
         db = self._db
