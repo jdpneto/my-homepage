@@ -5,6 +5,9 @@
  *
  * State hooks the script may use (all optional, styling degrades gracefully):
  *   li.clip[data-kept="true"]            kept star in accent colour
+ *   button.clip-kept[aria-pressed]       the row's star (a button beside .clip-open)
+ *   #select-download.ready               prepared: "Save N videos" (second tap shares)
+ *   .player-download.ready               prepared: "Save video" (home-screen app on iOS)
  *   #clips[aria-busy="true"]             "loading…" under the list
  *   .player-keep.on                      Keep button shown as active (clip kept)
  *   .player-delete.confirm               second step of the delete confirm
@@ -493,6 +496,11 @@ body:has(.cam-player:not([hidden])) .cam-banner {
 /* li.clip is the card; its content sits in button.clip-open (a real control
  * for keyboards and screen readers), which carries the grid layout. */
 .clip {
+    /* The star (button.clip-kept) is placed over the row from here; cqw (the
+     * row's width) puts it right under the 16:9 thumbnail on cards. */
+    position: relative;
+    container-type: inline-size;
+    --star-w: 36px;
     min-width: 0;
     border: 1px solid var(--border);
     border-radius: 4px;
@@ -518,14 +526,15 @@ body:has(#banner:not([hidden])) .clip {
     }
 }
 
+/* The last column stays empty: the star button sits over it (see .clip-kept). */
 .clip-open {
     display: grid;
-    grid-template-columns: minmax(0, 1fr) auto;
+    grid-template-columns: minmax(0, 1fr) auto var(--star-w);
     grid-template-areas:
-        "thumb    thumb"
-        "time     kept"
-        "camera   duration"
-        "triggers triggers";
+        "thumb    thumb    thumb"
+        "time     duration star"
+        "camera   camera   star"
+        "triggers triggers star";
     align-items: center;
     column-gap: 8px;
     width: 100%;
@@ -604,16 +613,67 @@ body:has(#banner:not([hidden])) .clip {
     font-size: 12px;
 }
 
+/* The row's star: its own button, a sibling of .clip-open (never inside it),
+ * over the column .clip-open leaves empty. Cards: from under the thumbnail to
+ * the bottom of the card. Phone rows (below): the full height of the right edge. */
 .clip-kept {
-    grid-area: kept;
-    justify-self: end;
+    position: absolute;
+    right: 0;
+    bottom: 0;
+    top: calc(100cqw * 9 / 16); /* the thumbnail's height (without cqw: just above the bottom) */
+    width: var(--star-w);
+    min-height: 32px;
+    display: flex;
+    align-items: flex-start;
+    justify-content: center;
+    margin: 0;
+    padding: 6px 0 0; /* the glyph on the time line, as before */
+    border: 0;
+    border-radius: 0;
+    background: none;
+    font: inherit;
     color: var(--text-secondary);
     font-size: 18px;
     line-height: 1;
+    cursor: pointer;
+    -webkit-tap-highlight-color: transparent;
+    touch-action: manipulation; /* no double-tap zoom delay on a quick second tap */
 }
 
 .clip[data-kept="true"] .clip-kept {
     color: var(--accent);
+}
+
+.clip-kept:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: -2px;
+}
+
+.clip-kept[aria-disabled="true"] {
+    cursor: progress;
+}
+
+@media (hover: hover) {
+    .clip-kept:hover {
+        color: var(--accent);
+        background: var(--accent-dim);
+    }
+}
+
+/* Select mode: the star is inert (the script sets `inert`); a tap there ticks the row. */
+#clips.selecting .clip-kept {
+    pointer-events: none;
+}
+
+/* Finger-sized on touch screens (cards are tall enough below the thumbnail). */
+@media (any-pointer: coarse) {
+    .clip {
+        --star-w: 44px;
+    }
+
+    .clip-kept {
+        min-height: var(--tap, 44px);
+    }
 }
 
 /* Infinite-scroll sentinel; shows a hint while the next page loads. */
@@ -1029,16 +1089,29 @@ body:has(.cam-player:not([hidden])) .cam-toast {
         border-radius: 0;
     }
 
+    /* The star takes the row's right edge (--star-w), full height. */
+    .clip {
+        --star-w: 44px;
+    }
+
     .clip-open {
         grid-template-columns: 112px minmax(0, 1fr) auto;
         grid-template-areas:
-            "thumb time     kept"
+            "thumb time     time"
             "thumb camera   duration"
             "thumb triggers triggers";
         column-gap: 10px;
         row-gap: 0;
-        padding: 6px 10px 6px 6px;
+        padding: 6px var(--star-w) 6px 6px;
         line-height: 1.35;
+    }
+
+    .clip-kept {
+        top: 0;
+        min-height: var(--tap, 44px);
+        align-items: center;
+        padding: 0;
+        font-size: 20px;
     }
 
     .clip:last-child {
@@ -1202,6 +1275,8 @@ body:has(.cam-player:not([hidden])) .cam-toast {
 @media (hover: hover) {
     .day-select:hover,
     #select-toggle:hover,
+    #select-keep:hover,
+    #select-download:not(.ready):hover,
     #select-cancel:hover {
         background: var(--accent-dim);
         border-color: var(--accent);
@@ -1226,13 +1301,39 @@ body:has(.cam-player:not([hidden])) .cam-toast {
 .day-delete[aria-disabled="true"],
 .day-select[aria-disabled="true"],
 #select-delete[aria-disabled="true"],
-#select-bar[data-count="0"] #select-delete {
+#select-keep[aria-disabled="true"],
+#select-download[aria-disabled="true"],
+#select-bar[data-count="0"] #select-delete,
+#select-bar[data-count="0"] #select-keep,
+#select-bar[data-count="0"] #select-download {
     opacity: 0.5;
     cursor: progress;
 }
 
-#select-bar[data-count="0"] #select-delete {
+#select-bar[data-count="0"] #select-delete,
+#select-bar[data-count="0"] #select-keep,
+#select-bar[data-count="0"] #select-download {
     cursor: not-allowed;
+}
+
+/* "Preparing 3/12…" keeps full colour: it is progress, not a dead button. */
+#select-download[aria-disabled="true"] {
+    opacity: 1;
+}
+
+/* Prepared: "Save 12 videos" asks for the second tap. */
+#select-download.ready,
+.player-bar .player-download.ready {
+    color: var(--bg);
+    background: var(--accent);
+    border-color: var(--accent);
+    font-weight: bold;
+}
+
+#select-keep::before {
+    content: "★";
+    content: "★" / "";
+    margin-right: 5px;
 }
 
 /* Only one of the two heading buttons at a time. */
@@ -1310,22 +1411,8 @@ body:has(.cam-player:not([hidden])) .cam-toast {
     background: var(--accent);
 }
 
-/* Kept rows cannot be ticked: dimmed, no box (tapping says why). */
-#clips.selecting .clip[data-kept="true"] {
-    opacity: 0.45;
-}
-
-#clips.selecting .clip[data-kept="true"] .clip-open {
-    cursor: not-allowed;
-}
-
-#clips.selecting .clip[data-kept="true"]::after {
-    content: "★";
-    content: "★" / "";
-    border-style: dashed;
-    border-color: var(--text-muted);
-    color: var(--accent);
-}
+/* Kept rows tick like any other (Keep and Download take them; Delete skips them);
+ * their star stays on the row. */
 
 /* The bar sits over the bottom of the page: leave room under the last row. */
 .cam-page:has(#clips.selecting) {
@@ -1429,12 +1516,40 @@ body:has(#clips.selecting) .cam-toast {
         border-color: var(--border);
     }
 
-    .cam-select-bar button {
-        padding: 0 12px;
+    /* Count on its own line, then Keep | Download | Delete | Cancel across the
+     * width (320px and up). Long labels ("Preparing 3/12…", "Save 12 videos")
+     * wrap to two lines inside the button rather than overflow. */
+    .select-bar-inner {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) minmax(0, 1.5fr) minmax(0, 1fr) minmax(0, 1fr);
+        gap: 6px;
     }
 
     #select-count {
+        grid-column: 1 / -1;
         font-size: 13px;
+    }
+
+    .cam-select-bar button {
+        min-width: 0;
+        padding: 0 4px;
+        font-size: 13px;
+        line-height: 1.15;
+        white-space: normal;
+        text-align: center;
+    }
+
+    #select-keep::before {
+        margin-right: 3px;
+    }
+
+    /* Two-line bar: room under the last row, toasts above it. */
+    .cam-page:has(#clips.selecting) {
+        padding-bottom: calc(112px + env(safe-area-inset-bottom));
+    }
+
+    body:has(#clips.selecting) .cam-toast {
+        bottom: calc(max(8px, env(safe-area-inset-bottom)) + 100px);
     }
 }
 

@@ -318,4 +318,118 @@ class CameraApiIT {
         bulk("{\"ids\":[" + id + "]}", admin, csrf()).andExpect(status().isServiceUnavailable());
         mvc.perform(get("/api/cameras/clips/" + id).with(admin)).andExpect(status().isOk());
     }
+
+    org.springframework.test.web.servlet.ResultActions bulkKeep(String json, RequestPostProcessor... with) throws Exception {
+        var req = org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post("/api/cameras/clips/keep")
+                .contentType(org.springframework.http.MediaType.APPLICATION_JSON).content(json);
+        for (RequestPostProcessor w : with) req = req.with(w);
+        return mvc.perform(req);
+    }
+
+    @Test
+    void bulkKeepReturnsOutcomes() throws Exception {
+        JsonNode clips = getJson("/api/cameras/clips?limit=3").get("clips");
+        long a = clips.get(0).get("id").asLong(), already = clips.get(1).get("id").asLong();
+        long untouched = clips.get(2).get("id").asLong();
+        mvc.perform(put("/api/cameras/clips/" + already + "/keep").with(admin).with(csrf())).andExpect(status().isOk());
+        String body = bulkKeep("{\"ids\":[" + a + "," + already + ",424242," + a + "]}", admin, csrf())
+                .andExpect(status().isOk()).andReturn().getResponse().getContentAsString();
+        JsonNode r = json.readTree(body);
+        assertThat(r.get("kept").toString()).isEqualTo("[" + a + "," + already + "]");
+        assertThat(r.get("notFound").toString()).isEqualTo("[424242]");
+        assertThat(r.get("failed").toString()).isEqualTo("[]");
+        assertThat(r.get("keptBytes").asLong()).isEqualTo(2L * VIDEO.length);
+        assertThat(root.resolve("Garage/2026-11-18/21-49-41.keep")).exists();
+        assertThat(root.resolve("Garage/2026-11-18/21-45-49.keep")).exists();
+        assertThat(getJson("/api/cameras/clips/" + a).get("kept").asBoolean()).isTrue();
+        assertThat(getJson("/api/cameras/clips/" + untouched).get("kept").asBoolean()).isFalse();
+    }
+
+    @Test
+    void bulkKeepValidates() throws Exception {
+        String tooMany = "{\"ids\":[" + String.join(",", java.util.stream.LongStream.rangeClosed(1, 501)
+                .mapToObj(Long::toString).toList()) + "]}";
+        for (String json : List.of("{\"ids\":[]}", tooMany, "{}", "{\"ids\":[\"x\"]}")) {
+            bulkKeep(json, admin, csrf()).andExpect(status().isBadRequest());
+        }
+        assertThat(getJson("/api/cameras/clips?kept=true").get("clips").size()).isZero();
+    }
+
+    @Test
+    void bulkKeepNeedsCsrfAndAuth() throws Exception {
+        long id = newestId();
+        bulkKeep("{\"ids\":[" + id + "]}", admin).andExpect(status().isForbidden());
+        bulkKeep("{\"ids\":[" + id + "]}", csrf()).andExpect(status().isUnauthorized());
+        assertThat(getJson("/api/cameras/clips/" + id).get("kept").asBoolean()).isFalse();
+        assertThat(root.resolve("Garage/2026-11-18/21-49-41.keep")).doesNotExist();
+    }
+
+    @Test
+    void bulkKeepIs503WhileTheVolumeIsMissing() throws Exception {
+        long id = newestId();
+        Files.delete(root.resolve("volume-marker.txt"));
+        bulkKeep("{\"ids\":[" + id + "]}", admin, csrf()).andExpect(status().isServiceUnavailable());
+        assertThat(getJson("/api/cameras/clips/" + id).get("kept").asBoolean()).isFalse();
+    }
+
+    /** Entry name to bytes, in zip order. */
+    static java.util.LinkedHashMap<String, byte[]> unzip(byte[] zip) throws Exception {
+        var out = new java.util.LinkedHashMap<String, byte[]>();
+        try (var in = new java.util.zip.ZipInputStream(new java.io.ByteArrayInputStream(zip))) {
+            for (java.util.zip.ZipEntry e; (e = in.getNextEntry()) != null; ) out.put(e.getName(), in.readAllBytes());
+        }
+        return out;
+    }
+
+    @Test
+    void zipContainsTheSelectedClips() throws Exception {
+        long living = getJson("/api/cameras/clips?camera=Living%20Room").get("clips").get(0).get("id").asLong();
+        long garage = newestId();
+        Files.write(root.resolve("Living Room/2026-11-18/20-00-00.mp4"), new byte[]{9, 8, 7});
+        var res = mvc.perform(get("/api/cameras/clips/zip").param("ids", garage + "," + living + "," + garage)
+                        .with(admin))
+                .andExpect(status().isOk())
+                .andExpect(header().string("Content-Type", "application/zip"))
+                .andExpect(header().string("Cache-Control", "private, no-store"))
+                .andReturn().getResponse();
+        assertThat(res.getHeader("Content-Disposition"))
+                .matches("attachment; filename=\"cameras-\\d{4}-\\d{2}-\\d{2}-\\d{4}\\.zip\"");
+        var entries = unzip(res.getContentAsByteArray());
+        assertThat(entries.keySet()).containsExactly("Garage/2026-11-18/21-49-41.mp4",
+                "Living Room/2026-11-18/20-00-00.mp4");
+        assertThat(entries.get("Garage/2026-11-18/21-49-41.mp4")).isEqualTo(VIDEO);
+        assertThat(entries.get("Living Room/2026-11-18/20-00-00.mp4")).isEqualTo(new byte[]{9, 8, 7});
+    }
+
+    @Test
+    void zipSkipsUnknownAnd404WhenNone() throws Exception {
+        long garage = newestId();
+        long living = getJson("/api/cameras/clips?camera=Living%20Room").get("clips").get(0).get("id").asLong();
+        Files.delete(root.resolve("Living Room/2026-11-18/20-00-00.mp4")); // row still there, file gone
+        byte[] zip = mvc.perform(get("/api/cameras/clips/zip").param("ids", "424242," + living + "," + garage)
+                        .with(admin))
+                .andExpect(status().isOk()).andReturn().getResponse().getContentAsByteArray();
+        assertThat(unzip(zip).keySet()).containsExactly("Garage/2026-11-18/21-49-41.mp4");
+        mvc.perform(get("/api/cameras/clips/zip").param("ids", "424242," + living).with(admin))
+                .andExpect(status().isNotFound());
+    }
+
+    @Test
+    void zipNeedsAuth() throws Exception {
+        long id = newestId();
+        mvc.perform(get("/api/cameras/clips/zip").param("ids", Long.toString(id)))
+                .andExpect(status().isUnauthorized());
+    }
+
+    @Test
+    void zipValidates() throws Exception {
+        long id = newestId();
+        String tooMany = String.join(",", java.util.stream.LongStream.rangeClosed(1, 501)
+                .mapToObj(Long::toString).toList());
+        mvc.perform(get("/api/cameras/clips/zip").with(admin)).andExpect(status().isBadRequest());
+        for (String ids : List.of("", tooMany, "x", id + ",x", id + ",,1", "1.5")) {
+            mvc.perform(get("/api/cameras/clips/zip").param("ids", ids).with(admin))
+                    .andExpect(status().isBadRequest());
+        }
+    }
 }

@@ -4,18 +4,20 @@
  * Markup contract: templates/admin/cameras.html. Rows are li.clip with data-id, data-start
  * (ISO with the clip's own offset), data-camera, data-kept ("true"/"false"), data-triggers
  * (comma list), data-size (bytes); each row's content sits in a button.clip-open, which is
- * what takes focus. #clips carries data-next (cursor, absent when there is no further page)
+ * what takes focus, followed by its own button.clip-kept (the star, aria-pressed: one tap
+ * keeps/unkeeps; inert in select mode, where a tap anywhere on the row ticks it). #clips carries data-next (cursor, absent when there is no further page)
  * and data-query (current filter as a query string, absent when there is no filter), and
  * gets class "selecting" in select mode. Each day is an h3.day (span.day-label,
  * span.day-meta, button.day-select, button.day-delete) followed by its ul.clip-list.
  * Select mode: button#select-toggle (filter row), div#select-bar with #select-count,
- * #select-delete, #select-cancel.
+ * #select-keep, #select-download, #select-delete, #select-cancel.
  * Mode switch: div#mode-switch (data-current, and data-pending-id / data-pending-mode while
  * a request is pending) with button[data-mode="disarm|home|away"][aria-pressed],
  * span.cam-mode-other (a mode with no button, e.g. "off") and span#mode-status (role=status).
  *
  * API used (all under /api/cameras/): clips (paged list), clips/{id} (+ /video, /thumb,
- * /download, /keep), clips/delete (bulk, explicit ids), auth/revoke-all, alerts/test,
+ * /download, /keep), clips/delete and clips/keep (bulk, explicit ids), clips/zip (one zip of
+ * the selected videos), auth/revoke-all, alerts/test,
  * alerts/mute, mode (switch request + its status), status (signed-in probe, storage line).
  *
  * Data from the server only ever reaches the DOM through textContent / attributes.
@@ -61,11 +63,19 @@
     const CLIP_ID = /^\d+$/;
     const BULK_MAX = 500;          // ids per POST /clips/delete (the server refuses more)
     const ARMED_SLACK_PX = 8;      // an armed day Delete disarms once its heading moves further
-    const KEPT_NOT_SELECTABLE = 'Kept clips can\'t be deleted — unkeep first';
+    const KEPT_NOT_DELETABLE = 'Kept clips can\'t be deleted — unkeep first';
+    // iPhone/iPad: selected clips go to the share sheet ("Save N Videos" to Photos) as files
+    // held in memory, so a share is capped.
+    const SHARE_MAX_CLIPS = 30;
+    const SHARE_MAX_BYTES = 300 * 1048576;
 
     // Select mode: selected ids (string) -> their li.clip.
     let selecting = false;
     const selected = new Map();
+    // Bulk Download via the share sheet: { key (selection), files (null while preparing), abort, settling }.
+    let shareJob = null;
+    // The player's Download via the share sheet: { row, file (null while preparing), abort }.
+    let playerShare = null;
 
     // ---------------------------------------------------------------- time
 
@@ -324,13 +334,19 @@
         return allRows().find(r => r.dataset.id === String(id)) || null;
     }
 
+    /**
+     * The row's star is a toggle button: its name stays "Keep clip" and aria-pressed carries
+     * the state (a toggle whose name also flipped would read "Unkeep clip, pressed"); the
+     * tooltip says what a click will do.
+     */
     function setRowKept(row, kept) {
         row.dataset.kept = kept ? 'true' : 'false';
         const star = row.querySelector('.clip-kept');
         if (star) {
             star.textContent = kept ? '★' : '☆';
-            star.setAttribute('role', 'img'); // a plain span cannot carry a name
-            star.setAttribute('aria-label', kept ? 'kept' : 'not kept');
+            star.setAttribute('aria-pressed', kept ? 'true' : 'false');
+            star.setAttribute('aria-label', 'Keep clip');
+            star.title = kept ? 'Unkeep clip' : 'Keep clip';
         }
     }
 
@@ -641,6 +657,7 @@
         const title = playerTitleFor(row);
         playerTitle.textContent = title;
         renderKeep(row.dataset.kept === 'true');
+        dropPlayerShare();
         linkDownload.href = API + clipPath(row.dataset.id, '/download');
         video.src = API + clipPath(row.dataset.id, '/video');
         const playing = video.play();
@@ -654,6 +671,7 @@
     function close() {
         if (!isOpen()) return;
         stopVideo();
+        dropPlayerShare();
         disarmDelete();
         showMessage('');
         if (playerLive) silence(playerLive);
@@ -758,8 +776,10 @@
         if (daySelect) return onDaySelect(daySelect);
         const row = e.target.closest('li.clip');
         if (!row || !clips.contains(row)) return;
-        if (selecting) toggleRow(row);
-        else open(row);
+        if (selecting) return toggleRow(row); // the star is inert then: the whole row ticks
+        const star = e.target.closest('button.clip-kept');
+        if (star) return onStar(row, star);
+        open(row);
     });
     // A held Enter repeats clicks: no auto-repeat on the heading buttons or rows (a repeat
     // would arm and then confirm a day delete, or flip a tick back and forth).
@@ -768,6 +788,79 @@
     });
 
     btnClose.addEventListener('click', close);
+
+    // Download in the home-screen app on iPhone/iPad: navigating to the file would open it in
+    // a viewer with no way back to the app. Instead, two taps like the bulk Download:
+    // "Preparing…" (fetches the video), then "Save video" opens the share sheet. Everywhere
+    // else the link downloads as usual.
+    function dropPlayerShare() {
+        const job = playerShare;
+        if (!job) return;
+        playerShare = null;
+        job.abort.abort();
+        linkDownload.textContent = 'Download';
+        linkDownload.classList.remove('ready');
+        linkDownload.removeAttribute('aria-disabled');
+    }
+
+    linkDownload.addEventListener('click', e => {
+        const row = current;
+        if (!row || !row.isConnected || !sharePlayerClip()) return; // the plain link
+        e.preventDefault();
+        const job = playerShare;
+        if (job && job.row === row && job.file) {
+            // The other half of a double-tap, or the sheet is already open (a second share()
+            // would reject and drop the video while the sheet shows it).
+            if (job.sharing || isQuiet(linkDownload)) return;
+            job.sharing = true;
+            let shared;
+            try {
+                shared = navigator.share({ files: [job.file] }); // first thing: needs this tap
+            } catch (err) {
+                shared = Promise.reject(err);
+            }
+            Promise.resolve(shared).finally(() => { job.sharing = false; }).then(() => {
+                if (playerShare === job) dropPlayerShare();
+            }, err => {
+                if (isShareStillReady(err)) return; // closed the sheet, or one already open
+                if (err && err.name === 'NotAllowedError') return toast('Tap “Save video” again', true);
+                if (playerShare === job) dropPlayerShare();
+                toast('Sharing failed', true);
+                console.error(err);
+            });
+            return;
+        }
+        if (job) return; // preparing
+        preparePlayerShare(row);
+    });
+
+    async function preparePlayerShare(row) {
+        const job = { row: row, file: null, abort: new AbortController(), sharing: false };
+        playerShare = job;
+        linkDownload.textContent = 'Preparing…';
+        linkDownload.setAttribute('aria-disabled', 'true');
+        let file;
+        try {
+            file = await fetchVideoFile(row.dataset.id, job.abort.signal);
+        } catch (err) {
+            if (playerShare !== job) return;
+            dropPlayerShare();
+            if (!(err && err.name === 'AbortError')) failed('Preparing the video', err);
+            return;
+        }
+        if (playerShare !== job) return; // another clip, or closed
+        if (!file) {
+            dropPlayerShare();
+            clipGone(row);
+            return;
+        }
+        job.file = file;
+        linkDownload.removeAttribute('aria-disabled');
+        linkDownload.textContent = 'Save video';
+        linkDownload.classList.add('ready');
+        quietFor(linkDownload, CONFIRM_MIN_MS);
+        announce('Ready — tap Save video');
+    }
     btnPrev.addEventListener('click', () => { if (current) openBefore(current); });
     btnNext.addEventListener('click', () => { if (current) openAfter(current); });
 
@@ -784,27 +877,37 @@
             });
     });
 
+    /** Keeps the row's clip, or unkeeps it when kept; the row's star and the player follow. */
+    async function toggleKept(row) {
+        const keep = row.dataset.kept !== 'true';
+        try {
+            const view = await api(clipPath(row.dataset.id, '/keep'), keep ? 'PUT' : 'DELETE');
+            const kept = view && typeof view.kept === 'boolean' ? view.kept : keep;
+            setRowKept(row, kept);
+            refreshStorage(); // the "Kept X" figure
+            if (current === row) {
+                renderKeep(kept);
+                if (!kept && playerMessage.textContent === KEPT_MESSAGE) showMessage('');
+            }
+        } catch (err) {
+            if (err instanceof ApiError && err.status === 404) clipGone(row);
+            else failed(keep ? 'Keep' : 'Unkeep', err);
+        }
+    }
+
     // Keep / Unkeep
     btnKeep.addEventListener('click', () => {
         const row = current;
         if (!row || !row.isConnected) return; // detached = deleted, the next page is loading
         // guarded: a double-tap must not keep and then at once unkeep.
-        guarded(btnKeep, async () => {
-            const keep = row.dataset.kept !== 'true';
-            try {
-                const view = await api(clipPath(row.dataset.id, '/keep'), keep ? 'PUT' : 'DELETE');
-                const kept = view && typeof view.kept === 'boolean' ? view.kept : keep;
-                setRowKept(row, kept);
-                if (current === row) {
-                    renderKeep(kept);
-                    if (!kept && playerMessage.textContent === KEPT_MESSAGE) showMessage('');
-                }
-            } catch (err) {
-                if (err instanceof ApiError && err.status === 404) clipGone(row);
-                else failed(keep ? 'Keep' : 'Unkeep', err);
-            }
-        });
+        guarded(btnKeep, () => toggleKept(row));
     });
+
+    /** The row's star: same as the player's Keep, with its own double-tap guard. */
+    function onStar(row, star) {
+        if (!row.isConnected) return;
+        guarded(star, () => toggleKept(row));
+    }
 
     // Delete: kept clips get the message (no API call); others need a second, separate click
     // within 4 s. A click sooner than CONFIRM_MIN_MS after arming is the other half of a
@@ -923,6 +1026,8 @@
     const selectCount = document.getElementById('select-count');
     const selectDelete = document.getElementById('select-delete');
     const selectCancel = document.getElementById('select-cancel');
+    const selectKeep = document.getElementById('select-keep');
+    const selectDownload = document.getElementById('select-download');
 
     function rowsOf(list) {
         return list ? Array.from(list.querySelectorAll('li.clip')) : [];
@@ -996,8 +1101,7 @@
             }
             const pick = heading.querySelector('.day-select');
             if (pick) {
-                const selectable = rows.filter(r => !isKept(r));
-                const all = selectable.length > 0 && selectable.every(r => selected.has(r.dataset.id));
+                const all = rows.length > 0 && rows.every(r => selected.has(r.dataset.id));
                 pick.setAttribute('aria-pressed', all ? 'true' : 'false');
             }
         }
@@ -1009,6 +1113,8 @@
         const text = rows.length + ' selected · ' + mb(sumSizes(rows));
         if (selectCount.textContent !== text) selectCount.textContent = text;
         if (selectBar) selectBar.dataset.count = String(rows.length);
+        // Videos prepared for the share sheet are for exactly the selection they were made from.
+        if (shareJob && !shareJob.settling && shareJob.key !== selectionKey()) dropShare();
     }
 
     /** After any change to the rows or the selection. */
@@ -1020,6 +1126,9 @@
     /** Select-mode state of one row (ticked: aria-pressed on its button). */
     function decorateRow(row) {
         const btn = row.querySelector('.clip-open');
+        // Select mode: the star takes no taps or focus; a tap on it ticks the row instead.
+        const star = row.querySelector('.clip-kept');
+        if (star) star.inert = selecting;
         if (!selecting) {
             row.classList.remove('selected');
             if (btn) {
@@ -1029,15 +1138,13 @@
             }
             return;
         }
-        const kept = isKept(row);
-        if (kept) selected.delete(row.dataset.id);
+        // Kept rows tick too (to download or keep along with others); Delete skips them.
         const on = selected.has(row.dataset.id);
         row.classList.toggle('selected', on);
         if (btn) {
             btn.removeAttribute('aria-haspopup'); // ticks, does not open the player
             btn.setAttribute('aria-pressed', on ? 'true' : 'false');
-            if (kept) btn.setAttribute('aria-disabled', 'true');
-            else btn.removeAttribute('aria-disabled');
+            btn.removeAttribute('aria-disabled');
         }
     }
 
@@ -1056,10 +1163,6 @@
     }
 
     function toggleRow(row) {
-        if (isKept(row)) {
-            toast(KEPT_NOT_SELECTABLE);
-            return;
-        }
         const id = row.dataset.id;
         if (selected.has(id)) selected.delete(id);
         else selected.set(id, row);
@@ -1194,7 +1297,7 @@
             doomed.map(r => r.dataset.id));
     }
 
-    /** "Select day": loads the rest of the day, then ticks all its non-kept rows (or unticks). */
+    /** "Select day": loads the rest of the day, then ticks all its rows (or unticks them). */
     async function onDaySelect(btn) {
         if (!selecting || bulkBlocked() || isBusy(btn)) return;
         const list = listOf(btn.closest('h3.day'));
@@ -1209,11 +1312,8 @@
             btn.removeAttribute('aria-disabled');
         }
         if (!complete || !selecting) return;
-        const selectable = rowsOf(list).filter(r => !isKept(r));
-        if (!selectable.length) {
-            toast(KEPT_NOT_SELECTABLE);
-            return;
-        }
+        const selectable = rowsOf(list);
+        if (!selectable.length) return;
         const all = selectable.every(r => selected.has(r.dataset.id));
         for (const r of selectable) {
             if (all) selected.delete(r.dataset.id);
@@ -1309,12 +1409,19 @@
         selectDelete.addEventListener('click', () => {
             if (!selecting || bulkBlocked() || isBusy(selectDelete)) return;
             if (armed && armed.btn === selectDelete) return confirmBulk();
-            const rows = Array.from(selected.values()).filter(r => r.isConnected && !isKept(r));
+            const rows = selectedRows();
             if (!rows.length) {
                 toast('Tap clips to select them first');
                 return;
             }
-            armBulk(selectDelete, 'Yes, delete ' + rows.length, rows.map(r => r.dataset.id));
+            const doomed = rows.filter(r => !isKept(r));
+            if (!doomed.length) {
+                toast(KEPT_NOT_DELETABLE);
+                return;
+            }
+            const kept = rows.length - doomed.length;
+            armBulk(selectDelete, 'Yes, delete ' + doomed.length + (kept ? ' · ' + kept + ' kept stay' : ''),
+                doomed.map(r => r.dataset.id));
         });
     }
     if (selectBar) {
@@ -1322,6 +1429,332 @@
             if (e.repeat && (e.key === 'Enter' || e.key === ' ')) e.preventDefault();
         });
     }
+    /** Ticked rows still on the page (kept ones too), in the order they were ticked. */
+    function selectedRows() {
+        return Array.from(selected.values()).filter(r => r.isConnected);
+    }
+
+    function selectionKey() {
+        return Array.from(selected.keys()).sort().join(',');
+    }
+
+    // ---- bulk Keep
+
+    if (selectKeep) {
+        selectKeep.addEventListener('click', () => {
+            if (!selecting || bulkBlocked() || isBusy(selectKeep) || isQuiet(selectKeep)) return;
+            disarmBulk();
+            const ticked = selectedRows();
+            if (!ticked.length) {
+                toast('Tap clips to select them first');
+                return;
+            }
+            const rows = ticked.filter(r => !isKept(r));
+            if (!rows.length) {
+                toast(ticked.length === 1 ? 'Already kept' : 'All already kept');
+                return;
+            }
+            guarded(selectKeep, async () => {
+                bulkBusy = true;
+                try {
+                    await keepIds(rows.map(r => r.dataset.id));
+                } finally {
+                    bulkBusy = false;
+                    bulkQuietUntil = performance.now() + CONFIRM_MIN_MS;
+                }
+            });
+        });
+    }
+
+    /** POST /clips/keep in chunks of BULK_MAX, like deleteIds. */
+    async function keepIds(ids) {
+        const total = { kept: [], keptBytes: 0, notFound: [], failed: [] };
+        let error = null;
+        let unsent = 0;
+        for (let i = 0; i < ids.length; i += BULK_MAX) {
+            const chunk = ids.slice(i, i + BULK_MAX);
+            try {
+                const body = await api('/clips/keep', 'POST', { ids: chunk.map(Number) }) || {};
+                for (const k of ['kept', 'notFound', 'failed']) {
+                    if (Array.isArray(body[k])) total[k].push(...body[k].map(String));
+                }
+                total.keptBytes += Number(body.keptBytes) || 0;
+            } catch (err) {
+                error = err;
+                unsent += chunk.length;
+                if (err instanceof ApiError && (err.status === 401 || err.status === 0 || err.status === 503)) {
+                    unsent += Math.max(0, ids.length - i - chunk.length);
+                    break;
+                }
+            }
+        }
+        applyKeepResult(total, error, unsent);
+    }
+
+    function applyKeepResult(r, error, unsent) {
+        const byId = new Map(allRows().map(row => [row.dataset.id, row]));
+        let closePlayer = false;
+        for (const id of r.kept) {
+            const row = byId.get(id);
+            if (!row) continue;
+            setRowKept(row, true);
+            decorateRow(row); // stays ticked: Download can follow
+            if (isOpen() && current === row) renderKeep(true);
+        }
+        for (const id of r.notFound) {
+            const row = byId.get(id);
+            if (!row) continue;
+            if (isOpen() && current === row) closePlayer = true;
+            detachRow(row);
+        }
+        showEmptyIfNone();
+        refreshListUi();
+        rearm();
+        if (closePlayer) close();
+
+        const done = r.kept.length + r.notFound.length + r.failed.length;
+        if (error && !done) {
+            if (error instanceof ApiError && error.status === 503) {
+                toast('Not kept — the camera volume is missing', true);
+            } else {
+                failed('Keeping clips', error);
+            }
+        } else if (done) {
+            let text = 'Kept ' + clipCount(r.kept.length) + ' · ' + mb(r.keptBytes);
+            if (r.notFound.length) text += ' · ' + r.notFound.length + ' already gone';
+            if (r.failed.length) text += ' · ' + r.failed.length + ' could not be kept';
+            if (unsent) text += ' · ' + unsent + ' not sent' + (error && error.status ? ' (' + error.status + ')' : '');
+            toast(text, r.failed.length > 0 || unsent > 0);
+        }
+        if (r.kept.length) refreshStorage();
+    }
+
+    // ---- bulk Download
+    //
+    // iPhone/iPad (and the home-screen app), where Web Share takes files: two taps. The first
+    // fetches each selected video ("Preparing 3/12…"); the button then reads "Save 12 videos",
+    // and the second tap opens the share sheet (navigator.share needs a tap of its own, so
+    // nothing is awaited before it) → "Save 12 Videos" puts them in Photos. Elsewhere: one zip
+    // (GET /clips/zip), downloaded by the browser straight from the server.
+
+    const downloadIdle = selectDownload ? selectDownload.textContent : 'Download';
+
+    /** True when the share sheet takes video files here (feature test, nothing sent). */
+    function canShareFiles() {
+        try {
+            return typeof navigator.share === 'function' && typeof navigator.canShare === 'function'
+                && navigator.canShare({ files: [new File([new Blob()], 'clip.mp4', { type: 'video/mp4' })] });
+        } catch (e) {
+            return false;
+        }
+    }
+
+    /**
+     * A share() rejection that leaves the prepared videos ready: the sheet was closed
+     * (AbortError), or another share was still open (InvalidStateError).
+     */
+    function isShareStillReady(err) {
+        return !!err && (err.name === 'AbortError' || err.name === 'InvalidStateError');
+    }
+
+    /** iPhone, iPod, or an iPad (iPadOS reports itself as a Mac, but with a touch screen). */
+    function isAppleMobile() {
+        return /iPhone|iPad|iPod/.test(navigator.userAgent)
+            || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+    }
+
+    function isHomeScreenApp() {
+        return navigator.standalone === true
+            || (typeof window.matchMedia === 'function' && window.matchMedia('(display-mode: standalone)').matches);
+    }
+
+    /** Bulk Download through the share sheet: on iPhone/iPad, or in the home-screen app. */
+    function shareSelected() {
+        return canShareFiles() && (isAppleMobile() || isHomeScreenApp());
+    }
+
+    /** The player's Download through the share sheet: the home-screen app on iPhone/iPad only. */
+    function sharePlayerClip() {
+        return canShareFiles() && isAppleMobile() && isHomeScreenApp();
+    }
+
+    function videoCount(n) {
+        return n + (n === 1 ? ' video' : ' videos');
+    }
+
+    /** The server's file name for a download (Content-Disposition), else one made up here. */
+    function downloadName(res, id) {
+        const cd = res.headers.get('Content-Disposition') || '';
+        let m = /filename\*=UTF-8''([^;]+)/i.exec(cd);
+        if (m) {
+            try {
+                return decodeURIComponent(m[1]);
+            } catch (e) {
+                // fall through to the plain filename
+            }
+        }
+        m = /filename="([^"]+)"/i.exec(cd);
+        return m ? m[1] : 'clip-' + id + '.mp4';
+    }
+
+    /**
+     * Fetches one clip's video as a File (video/mp4: the share sheet offers "Save Video" by
+     * type). Resolves null when the clip is gone (404); rejects with ApiError otherwise.
+     */
+    async function fetchVideoFile(id, signal) {
+        let res;
+        try {
+            res = await fetch(API + clipPath(id, '/download'), { credentials: 'same-origin', signal: signal });
+        } catch (e) {
+            if (e && e.name === 'AbortError') throw e;
+            toast('Network error — check the connection', true);
+            throw new ApiError(0, true);
+        }
+        if (res.status === 404) return null;
+        if (res.status === 401) {
+            showBanner(SIGNED_OUT);
+            throw new ApiError(401, true);
+        }
+        if (!res.ok) throw new ApiError(res.status, false);
+        const blob = await res.blob();
+        return new File([blob], downloadName(res, id), { type: 'video/mp4' });
+    }
+
+    /** Forgets prepared (or half-prepared) videos: the button is "Download" again. */
+    function dropShare() {
+        const job = shareJob;
+        if (!job) return;
+        shareJob = null;
+        job.abort.abort();
+        if (selectDownload) {
+            selectDownload.textContent = downloadIdle;
+            selectDownload.classList.remove('ready');
+            selectDownload.removeAttribute('aria-disabled');
+        }
+    }
+
+    async function prepareShare(rows) {
+        if (rows.length > SHARE_MAX_CLIPS) {
+            toast('Select up to 30 clips to save at once', true);
+            return;
+        }
+        if (sumSizes(rows) > SHARE_MAX_BYTES) {
+            toast('Select up to 300 MB to save at once', true);
+            return;
+        }
+        const job = { key: selectionKey(), files: null, abort: new AbortController(), settling: false, sharing: false };
+        shareJob = job;
+        selectDownload.setAttribute('aria-disabled', 'true');
+        const files = [];
+        const gone = [];
+        try {
+            for (let i = 0; i < rows.length; i++) {
+                selectDownload.textContent = 'Preparing ' + i + '/' + rows.length + '…';
+                const file = await fetchVideoFile(rows[i].dataset.id, job.abort.signal);
+                if (shareJob !== job) return; // dropped meanwhile (selection changed, Cancel)
+                if (file) files.push(file);
+                else gone.push(rows[i]);
+            }
+        } catch (err) {
+            if (shareJob === job) {
+                dropShare();
+                if (!(err && err.name === 'AbortError')) failed('Preparing the videos', err);
+            }
+            return;
+        }
+        if (shareJob !== job) return;
+        selectDownload.removeAttribute('aria-disabled');
+        // Clips deleted elsewhere since the page loaded: off the list, without dropping the job.
+        job.settling = true;
+        gone.forEach(removeRow);
+        job.settling = false;
+        if (!files.length) {
+            dropShare();
+            toast('These clips no longer exist', true);
+            return;
+        }
+        job.key = selectionKey();
+        job.files = files;
+        const label = 'Save ' + videoCount(files.length);
+        selectDownload.textContent = label;
+        selectDownload.classList.add('ready');
+        quietFor(selectDownload, CONFIRM_MIN_MS); // the second tap must be a tap of its own
+        toast((gone.length ? gone.length + ' already gone · ' : '') + 'Ready — tap “' + label + '”');
+    }
+
+    /** Second tap: straight into navigator.share (it needs this tap's activation). */
+    function shareFiles(job) {
+        job.sharing = true;
+        let shared;
+        try {
+            shared = navigator.share({ files: job.files });
+        } catch (e) {
+            shared = Promise.reject(e);
+        }
+        Promise.resolve(shared).finally(() => { job.sharing = false; }).then(() => {
+            if (shareJob === job) dropShare();
+            toast(videoCount(job.files.length) + ' sent to the share sheet');
+        }, err => {
+            if (isShareStillReady(err)) return; // closed the sheet, or one already open
+            if (err && err.name === 'NotAllowedError') {
+                toast('Tap “Save ' + videoCount(job.files.length) + '” again', true);
+                return;
+            }
+            if (shareJob === job) dropShare();
+            toast('Sharing failed', true);
+            console.error(err);
+        });
+    }
+
+    /** Everywhere else: one zip, which the browser downloads straight from the server. */
+    async function downloadZip(rows) {
+        const ids = rows.map(r => r.dataset.id).filter(id => CLIP_ID.test(id));
+        if (ids.length > BULK_MAX) {
+            toast('Select up to ' + BULK_MAX + ' clips to download at once', true);
+            return;
+        }
+        await guarded(selectDownload, async () => {
+            // A link to an endpoint that answers 401 would save an error page as the zip:
+            // make sure the session is alive first (the banner says so when it is not).
+            try {
+                await api('/status');
+            } catch (err) {
+                failed('Download', err);
+                return;
+            }
+            const a = document.createElement('a');
+            a.href = API + '/clips/zip?ids=' + ids.join(',');
+            a.download = '';
+            a.hidden = true;
+            document.body.appendChild(a);
+            a.click();
+            a.remove();
+            toast('Downloading ' + clipCount(ids.length) + ' as a zip · ' + mb(sumSizes(rows)));
+        });
+    }
+
+    if (selectDownload) {
+        selectDownload.addEventListener('click', () => {
+            if (!selecting) return;
+            const job = shareJob;
+            if (job && job.files) {
+                // The other half of a double-tap, or the sheet is already open.
+                if (job.sharing || isQuiet(selectDownload)) return;
+                if (job.key === selectionKey()) return shareFiles(job);
+                dropShare(); // (updateSelectCount drops it on any change; belt and braces)
+            }
+            if (shareJob || isBusy(selectDownload) || isQuiet(selectDownload) || bulkBlocked()) return;
+            disarmBulk();
+            const rows = selectedRows();
+            if (!rows.length) {
+                toast('Tap clips to select them first');
+                return;
+            }
+            if (shareSelected()) prepareShare(rows);
+            else downloadZip(rows);
+        });
+    }
+
     // Escape leaves select mode (the player, when open, takes Escape first: capture phase).
     document.addEventListener('keydown', e => {
         if (e.key === 'Escape' && selecting && !isOpen() && !e.defaultPrevented) {

@@ -6,6 +6,7 @@ import org.springframework.format.annotation.DateTimeFormat;
 import org.springframework.http.CacheControl;
 import org.springframework.http.ContentDisposition;
 import org.springframework.http.HttpHeaders;
+import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.DeleteMapping;
@@ -17,6 +18,18 @@ import org.springframework.web.bind.annotation.PutMapping;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
+import org.springframework.web.server.ResponseStatusException;
+import jakarta.servlet.http.HttpServletResponse;
+
+import java.io.IOException;
+import java.io.InputStream;
+import java.nio.file.NoSuchFileException;
+import java.time.Clock;
+import java.time.ZoneOffset;
+import java.util.ArrayList;
+import java.util.zip.Deflater;
+import java.util.zip.ZipEntry;
+import java.util.zip.ZipOutputStream;
 
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
@@ -36,10 +49,14 @@ public class CameraApiController {
     private static final MediaType MP4 = MediaType.parseMediaType("video/mp4");
     private static final DateTimeFormatter FILE_TIME = DateTimeFormatter.ofPattern("yyyy-MM-dd_HH-mm-ss");
 
-    private final ClipService clips;
+    private static final DateTimeFormatter ZIP_TIME = DateTimeFormatter.ofPattern("yyyy-MM-dd-HHmm");
 
-    public CameraApiController(ClipService clips) {
+    private final ClipService clips;
+    private final Clock clock;
+
+    public CameraApiController(ClipService clips, Clock clock) {
         this.clips = clips;
+        this.clock = clock;
     }
 
     @GetMapping("/clips")
@@ -114,15 +131,75 @@ public class CameraApiController {
     /** Deletes exactly these clips (1–500 ids); kept clips are skipped and reported. */
     @PostMapping("/clips/delete")
     public BulkDeleteResult deleteMany(@RequestBody BulkDeleteRequest body) {
-        if (body == null || body.ids() == null || body.ids().isEmpty() || body.ids().size() > MAX_BULK
-                || body.ids().contains(null)) {
-            throw new org.springframework.web.server.ResponseStatusException(
-                    org.springframework.http.HttpStatus.BAD_REQUEST, "ids: 1 to " + MAX_BULK + " clip ids");
-        }
-        return clips.deleteMany(body.ids());
+        return clips.deleteMany(requireIds(body == null ? null : body.ids()));
     }
 
     public record BulkDeleteRequest(List<Long> ids) {
+    }
+
+    /** Keeps exactly these clips (1–500 ids); already-kept clips count as kept. */
+    @PostMapping("/clips/keep")
+    public BulkKeepResult keepMany(@RequestBody BulkKeepRequest body) {
+        return clips.keepMany(requireIds(body == null ? null : body.ids()));
+    }
+
+    public record BulkKeepRequest(List<Long> ids) {
+    }
+
+    /**
+     * One zip of these clips' videos ({@code ids=1,2,3}, 1–500), streamed straight from the files:
+     * entries are the clip stems ({@code <Camera>/<YYYY-MM-DD>/<HH-MM-SS>.mp4}), stored without
+     * compression (videos are already compressed). Unknown ids and missing files are skipped; 404
+     * when none is left.
+     */
+    @GetMapping("/clips/zip")
+    public void zip(@RequestParam(required = false) String ids, HttpServletResponse response) throws IOException {
+        List<ClipService.ClipFile> videos = clips.existingVideos(requireIds(parseIds(ids)));
+        if (videos.isEmpty()) throw new ResponseStatusException(HttpStatus.NOT_FOUND, "none of these clips has a video");
+        // Named in the cameras' local time (the first clip's offset), when the zip was made.
+        ZoneOffset offset = videos.get(0).start().getOffset();
+        String name = "cameras-" + ZIP_TIME.format(clock.instant().atOffset(offset)) + ".zip";
+        response.setContentType("application/zip");
+        response.setHeader(HttpHeaders.CONTENT_DISPOSITION, ContentDisposition.attachment().filename(name).build().toString());
+        response.setHeader(HttpHeaders.CACHE_CONTROL, "private, no-store");
+        try (ZipOutputStream zip = new ZipOutputStream(response.getOutputStream(), StandardCharsets.UTF_8)) {
+            zip.setLevel(Deflater.NO_COMPRESSION);
+            for (ClipService.ClipFile v : videos) {
+                InputStream in;
+                try {
+                    in = Files.newInputStream(v.mp4());
+                } catch (NoSuchFileException e) {
+                    continue; // removed since it was listed (retention, a delete)
+                }
+                try (in) {
+                    zip.putNextEntry(new ZipEntry(v.stem() + ".mp4"));
+                    in.transferTo(zip);
+                    zip.closeEntry();
+                }
+            }
+        }
+    }
+
+    private static List<Long> parseIds(String ids) {
+        if (ids == null) return null;
+        List<Long> out = new ArrayList<>();
+        for (String part : ids.split(",", -1)) {
+            try {
+                out.add(Long.parseLong(part.strip()));
+            } catch (NumberFormatException e) {
+                throw badIds();
+            }
+        }
+        return out;
+    }
+
+    private static List<Long> requireIds(List<Long> ids) {
+        if (ids == null || ids.isEmpty() || ids.size() > MAX_BULK || ids.contains(null)) throw badIds();
+        return ids;
+    }
+
+    private static ResponseStatusException badIds() {
+        return new ResponseStatusException(HttpStatus.BAD_REQUEST, "ids: 1 to " + MAX_BULK + " clip ids");
     }
 
     static final int MAX_BULK = 500;

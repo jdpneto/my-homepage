@@ -294,4 +294,50 @@ class ClipServiceTest {
         assertThrows(VolumeUnavailableException.class, () -> service.delete(ids.get(0)));
         assertThat(service.list(all(10))).hasSize(5);
     }
+
+    @Test
+    void keepManyKeepsAndReportsUnknown() throws Exception {
+        fiveClips();
+        List<ClipView> all = service.list(all(10));
+        ClipView a = all.get(0), already = all.get(1), b = all.get(2);
+        service.keep(already.id(), true);
+        BulkKeepResult r = service.keepMany(List.of(a.id(), already.id(), b.id(), 999999L, a.id()));
+        assertThat(r.kept()).containsExactly(a.id(), already.id(), b.id());
+        assertThat(r.notFound()).containsExactly(999999L);
+        assertThat(r.failed()).isEmpty();
+        assertThat(r.keptBytes()).isEqualTo(a.sizeBytes() + already.sizeBytes() + b.sizeBytes()).isPositive();
+        assertThat(root.resolve("Garage/2026-11-18/21-49-41.keep")).exists();
+        assertThat(root.resolve("Garage/2026-11-18/21-45-49.keep")).exists();
+        assertThat(root.resolve("Living Room/2026-11-18/20-00-00.keep")).exists();
+        assertThat(root.resolve("Backyard/2026-11-17/19-23-30.keep")).doesNotExist();
+        assertThat(service.get(a.id()).orElseThrow().kept()).isTrue();
+        assertThat(service.get(b.id()).orElseThrow().kept()).isTrue();
+        assertThat(service.get(all.get(3).id()).orElseThrow().kept()).isFalse();
+    }
+
+    @Test
+    void keepManyContinuesPastAFailedClip() throws Exception {
+        fiveClips();
+        List<Long> ids = service.list(all(10)).stream().map(ClipView::id).toList();
+        Path day = root.resolve("Backyard/2026-11-16");
+        Files.setPosixFilePermissions(day, java.nio.file.attribute.PosixFilePermissions.fromString("r-xr-xr-x"));
+        try {
+            BulkKeepResult r = service.keepMany(ids);
+            assertThat(r.failed()).containsExactly(ids.get(4));
+            assertThat(r.kept()).containsExactlyElementsOf(ids.subList(0, 4));
+            assertThat(service.get(ids.get(4)).orElseThrow().kept()).isFalse();
+        } finally {
+            Files.setPosixFilePermissions(day, java.nio.file.attribute.PosixFilePermissions.fromString("rwxr-xr-x"));
+        }
+    }
+
+    @Test
+    void keepManyRefusedWhileVolumeMissing() throws Exception {
+        fiveClips();
+        List<Long> ids = service.list(all(10)).stream().map(ClipView::id).toList();
+        Files.delete(root.resolve("volume-marker.txt"));
+        assertThrows(VolumeUnavailableException.class, () -> service.keepMany(ids));
+        assertThat(service.list(all(10))).allMatch(c -> !c.kept());
+        assertThat(root.resolve("Garage/2026-11-18/21-49-41.keep")).doesNotExist();
+    }
 }

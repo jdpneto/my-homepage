@@ -120,8 +120,9 @@
                         <span class="clip-camera" th:text="${c.camera}">Garage</span>
                         <span class="clip-triggers" th:text="${#strings.listJoin(c.triggers, ', ')}">person</span>
                         <span class="clip-duration" th:text="${c.durationSeconds} + 's'">10s</span>
-                        <span class="clip-kept" role="img" th:text="${c.kept} ? '★' : '☆'" th:attr="aria-label=${c.kept} ? 'kept' : 'not kept'">☆</span>
                     </button>
+                    <!-- Keep/unkeep in one tap: a sibling of .clip-open (never inside it). -->
+                    <button type="button" class="clip-kept" th:attr="aria-pressed=${c.kept},title=${c.kept} ? 'Unkeep clip' : 'Keep clip'" aria-label="Keep clip" th:text="${c.kept} ? '★' : '☆'">☆</button>
                 </li>
             </ul>
         </th:block>
@@ -132,6 +133,8 @@
     <div id="select-bar" class="cam-select-bar" hidden role="region" aria-label="Selected clips">
         <div class="select-bar-inner">
             <span id="select-count" role="status">0 selected</span>
+            <button type="button" id="select-keep">Keep</button>
+            <button type="button" id="select-download">Download</button>
             <button type="button" id="select-delete">Delete</button>
             <button type="button" id="select-cancel">Cancel</button>
         </div>
@@ -145,8 +148,8 @@
                 <span class="clip-camera"></span>
                 <span class="clip-triggers"></span>
                 <span class="clip-duration"></span>
-                <span class="clip-kept" role="img"></span>
             </button>
+            <button type="button" class="clip-kept" aria-pressed="false" aria-label="Keep clip" title="Keep clip">☆</button>
         </li>
     </template>
 

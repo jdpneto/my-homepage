@@ -129,6 +129,48 @@ public class ClipService {
         return new BulkDeleteResult(deleted, freed, kept, missing, failed);
     }
 
+    /**
+     * Keeps exactly these clips, each through {@link #keep(long, boolean)} (the .keep file first).
+     * Clips already kept count as kept; one that fails on disk is reported and the rest continue.
+     * Duplicate ids count once.
+     */
+    public BulkKeepResult keepMany(java.util.Collection<Long> ids) {
+        if (!files.volumeOk()) throw new VolumeUnavailableException("camera volume not available — nothing was kept");
+        List<Long> kept = new ArrayList<>(), missing = new ArrayList<>(), failed = new ArrayList<>();
+        long bytes = 0;
+        for (Long id : new java.util.LinkedHashSet<>(ids)) {
+            try {
+                ClipView v = keep(id, true);
+                kept.add(id);
+                bytes += v.sizeBytes();
+            } catch (ClipNotFoundException e) {
+                missing.add(id);
+            } catch (RuntimeException e) {
+                log.warn("bulk keep: clip {} failed: {}", id, e.toString());
+                failed.add(id);
+            }
+        }
+        log.info("bulk keep: {} kept ({} bytes), {} not found, {} failed",
+                kept.size(), bytes, missing.size(), failed.size());
+        return new BulkKeepResult(kept, bytes, missing, failed);
+    }
+
+    /** A clip's video as it goes into a zip: its stem names the entry. */
+    public record ClipFile(String stem, Path mp4, OffsetDateTime start) {
+    }
+
+    /** The videos of these clips that exist on disk, in the given order; unknown ids and missing files are left out. */
+    public List<ClipFile> existingVideos(java.util.Collection<Long> ids) {
+        List<ClipFile> out = new ArrayList<>();
+        for (Long id : new java.util.LinkedHashSet<>(ids)) {
+            repo.findById(id).ifPresent(c -> {
+                Path mp4 = files.mp4(c.getStem());
+                if (Files.isRegularFile(mp4)) out.add(new ClipFile(c.getStem(), mp4, start(c)));
+            });
+        }
+        return out;
+    }
+
     /** With the volume detached, a delete would remove rows but no files, and the clips would come back. */
     private void requireVolume() {
         if (!files.volumeOk()) throw new VolumeUnavailableException();

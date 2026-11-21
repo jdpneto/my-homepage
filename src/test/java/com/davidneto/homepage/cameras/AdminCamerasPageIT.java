@@ -325,6 +325,78 @@ class AdminCamerasPageIT {
         assertThat(js).contains("/clips/delete").contains("Yes, delete").contains("kept stay");
     }
 
+    /** Each row's star is a button of its own, beside (never inside) the row's .clip-open button. */
+    @Test
+    void starIsItsOwnButton() throws Exception {
+        fourClips();
+        long keptId = repo.findByStem("Garage/2026-11-18/21-49-41").orElseThrow().getId();
+        mvc.perform(org.springframework.test.web.servlet.request.MockMvcRequestBuilders
+                .put("/api/cameras/clips/" + keptId + "/keep").with(admin)
+                .with(org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.csrf()))
+                .andExpect(status().isOk());
+        String html = page("/admin/cameras");
+
+        // Every <li class="clip"> (rendered rows and the script's <template> row).
+        java.util.regex.Matcher rows = java.util.regex.Pattern
+                .compile("<li class=\"clip\"[^>]*>(.*?)</li>", java.util.regex.Pattern.DOTALL).matcher(html);
+        int n = 0;
+        while (rows.find()) {
+            n++;
+            String row = rows.group(0);
+            String body = rows.group(1);
+            java.util.regex.Matcher star = java.util.regex.Pattern
+                    .compile("<button type=\"button\" class=\"clip-kept\"[^>]*>").matcher(body);
+            assertThat(star.find()).as("star button in %s", row).isTrue();
+            assertThat(star.group()).contains("aria-pressed=\"").contains("aria-label=\"Keep clip\"");
+            // After the .clip-open button has closed: a sibling, not a child.
+            int openEnd = body.indexOf("</button>", body.indexOf("class=\"clip-open\""));
+            assertThat(star.start()).as("star after .clip-open in %s", row).isGreaterThan(openEnd);
+            boolean renderedKept = row.contains("data-kept=\"true\"");
+            if (row.contains("data-id=\"")) {
+                assertThat(star.group()).contains("aria-pressed=\"" + renderedKept + "\"");
+            }
+        }
+        assertThat(n).isEqualTo(5); // 4 rows + the template
+        assertThat(html).containsPattern("data-id=\"" + keptId + "\"[^>]*data-kept=\"true\"");
+        assertThat(html).containsPattern("class=\"clip-kept\"[^>]*aria-pressed=\"true\"[^>]*>★</button>");
+
+        // No button anywhere inside another button.
+        java.util.regex.Matcher tags = java.util.regex.Pattern.compile("<button\\b|</button>").matcher(html);
+        int depth = 0;
+        while (tags.find()) {
+            if (tags.group().equals("</button>")) {
+                depth--;
+            } else {
+                assertThat(depth).as("button nested at offset %d", tags.start()).isZero();
+                depth++;
+            }
+        }
+        assertThat(depth).isZero();
+        // The star is no longer an image inside the row's button.
+        assertThat(html).doesNotContain("class=\"clip-kept\" role=\"img\"");
+    }
+
+    @Test
+    void selectBarHasKeepAndDownload() throws Exception {
+        fourClips();
+        String html = page("/admin/cameras");
+        int bar = html.indexOf("id=\"select-bar\"");
+        assertThat(bar).isPositive();
+        int barEnd = html.indexOf("id=\"clip-row\"", bar);
+        String barHtml = html.substring(bar, barEnd);
+        assertThat(barHtml).contains("<button type=\"button\" id=\"select-keep\"")
+                .contains("<button type=\"button\" id=\"select-download\"")
+                .contains("id=\"select-delete\"").contains("id=\"select-cancel\"");
+    }
+
+    @Test
+    void scriptHasBulkKeepZipAndShare() throws Exception {
+        String js = mvc.perform(get("/js/cameras.js")).andExpect(status().isOk()).andReturn().getResponse().getContentAsString();
+        assertThat(js).contains("/clips/keep").contains("/clips/zip").contains("navigator.share")
+                .contains("navigator.canShare").contains("Save ").contains("Preparing ")
+                .contains("Select up to 30 clips to save at once").contains("video/mp4");
+    }
+
     static String healthLine(String html) {
         java.util.regex.Matcher m = java.util.regex.Pattern.compile("<div class=\"cam-health\"[^>]*>([^<]*)</div>").matcher(html);
         assertThat(m.find()).isTrue();
