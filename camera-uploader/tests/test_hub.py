@@ -133,3 +133,29 @@ def test_mode_is_not_blocked_by_guard():
     for name in ("get_scene", "get_scene_info"):
         assert not getattr(getattr(Baichuan, name), _MARK, False), name
     assert getattr(Baichuan.set_scene, _MARK, False)  # switching stays blocked
+
+
+async def test_mode_name_missing_at_connect_is_read_on_demand(config_path):
+    from reolink_aio.const import UNKNOWN
+
+    from camera_uploader.config import load_config
+    from camera_uploader.hub import ReolinkHub
+
+    class Baichuan:  # the name load at connect failed (e.g. hub just rebooted)
+        active_scene_id = 3
+        names = {3: UNKNOWN}
+
+        async def get_scene(self):
+            return 3
+
+        async def get_scene_info(self, scene_id):
+            self.names[scene_id] = "Away"
+
+        @property
+        def active_scene(self):
+            return self.names.get(self.active_scene_id, UNKNOWN)
+
+    bc = Baichuan()
+    hub = ReolinkHub(load_config(config_path))
+    hub._host = SimpleNamespace(baichuan=bc)
+    assert await hub.mode() == "away"

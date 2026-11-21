@@ -90,10 +90,15 @@ class ReolinkHub:
             bc = self._require().baichuan
             await asyncio.wait_for(bc.get_scene(), MODE_TIMEOUT)
             name = bc.active_scene
+            if name == UNKNOWN and getattr(bc, "active_scene_id", -1) >= 0:
+                # The name was not loaded at connect (e.g. the hub had just rebooted): read it now.
+                await asyncio.wait_for(bc.get_scene_info(bc.active_scene_id), MODE_TIMEOUT)
+                name = bc.active_scene
         except Exception as exc:
-            if self._mode_error != str(exc):
-                log.warning("could not read the hub's mode: %s", exc)
-            self._mode_error = str(exc)
+            error = f"{type(exc).__name__}: {exc}"  # a TimeoutError has an empty message
+            if self._mode_error != error:
+                log.warning("could not read the hub's mode: %s", error)
+            self._mode_error = error
             return None
         self._mode_error = None
         if not isinstance(name, str) or not name or name == UNKNOWN:
