@@ -65,6 +65,13 @@ public class WebDavProtectionFilter extends OncePerRequestFilter {
             throws ServletException, IOException {
         String method = request.getMethod().toUpperCase(Locale.ROOT);
 
+        // Fail closed: a Destination we cannot parse could be decoded differently by Milton, so the
+        // name checks below would compare the wrong string.
+        if (!READ_ONLY.contains(method) && request.getHeader("Destination") != null
+                && destinationPath(request) == null) {
+            forbid(response, method, request.getRequestURI(), null, "unreadable Destination header");
+            return;
+        }
         if (!READ_ONLY.contains(method)
                 && (isMarker(decodedPath(request)) || isMarker(destinationPath(request)))) {
             forbid(response, method, request.getRequestURI(), null, "the volume marker cannot be written");
@@ -170,16 +177,17 @@ public class WebDavProtectionFilter extends OncePerRequestFilter {
         return trimSegments(info != null ? info : request.getServletPath());
     }
 
+    /** The decoded, trimmed Destination path; null when there is no header or it cannot be parsed. */
     private static String destinationPath(HttpServletRequest request) {
         String dest = request.getHeader("Destination");
         if (dest == null) return null;
         try {
             String path = URI.create(dest).getPath(); // decodes %-escapes
-            if (path == null) return trimSegments(dest);
+            if (path == null) return null; // opaque URI (e.g. "urn:..."): unreadable, refused by the caller
             int semi = path.indexOf(';');
             return trimSegments(semi >= 0 ? path.substring(0, semi) : path);
         } catch (IllegalArgumentException e) {
-            return trimSegments(dest);
+            return null; // unparseable: refused by the caller, never compared raw
         }
     }
 

@@ -255,6 +255,28 @@ class ProtectedFolderIT {
     }
 
     @Test
+    void unparseableDestinationIsRefused() throws Exception {
+        // A Destination the filter cannot parse must fail closed (any non-read-only method):
+        // comparing the raw, still percent-encoded text would miss "mode%2Drequest.json" if Milton
+        // decodes it its own way. Checked in an unprotected folder, where MOVE/COPY are otherwise allowed.
+        Files.writeString(plainRoot.resolve("note.txt"), "x");
+        String dest = "http://localhost:" + port + "/webdav/";
+        for (String bad : new String[]{dest + "mode%2Drequest.json|x", dest + "mode-request.json x",
+                dest + "copy.txt^", "urn:mode-request.json", "%zz"}) {
+            for (String method : new String[]{"MOVE", "COPY"}) {
+                assertThat(dav(method, "note.txt", "plain", "plain-password-1", null,
+                        "Destination", bad, "Overwrite", "T").statusCode()).as(method + " -> " + bad).isEqualTo(403);
+            }
+        }
+        assertThat(plainRoot.resolve("note.txt")).exists();
+        assertThat(plainRoot.resolve("mode-request.json")).doesNotExist();
+        // A well-formed destination is not blocked by the filter: it reaches the file store, which
+        // does not implement MOVE/COPY at all (501) - so this was never exploitable, only fail-closed now.
+        assertThat(dav("MOVE", "note.txt", "plain", "plain-password-1", null,
+                "Destination", dest + "moved.txt").statusCode()).isEqualTo(501);
+    }
+
+    @Test
     void whitespacePaddedNamesAreRefused() throws Exception {
         // Milton trims a new file's name (String.trim), so "mode-request.json " writes mode-request.json.
         String original = "{\"id\":\"r1\",\"mode\":\"home\"}";
