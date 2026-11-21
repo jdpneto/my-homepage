@@ -1,6 +1,8 @@
 package com.davidneto.homepage.cameras;
 
+import com.davidneto.homepage.security.ForgottenDeviceSessionFilter;
 import com.davidneto.homepage.security.RememberDeviceServices;
+import com.davidneto.homepage.security.RememberedLoginCsrfFilter;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.core.annotation.Order;
@@ -8,6 +10,7 @@ import org.springframework.http.HttpMethod;
 import org.springframework.security.config.annotation.web.builders.HttpSecurity;
 import org.springframework.security.config.annotation.web.configurers.AbstractHttpConfigurer;
 import org.springframework.security.web.SecurityFilterChain;
+import org.springframework.security.web.authentication.rememberme.RememberMeAuthenticationFilter;
 import org.springframework.security.web.authentication.AnonymousAuthenticationFilter;
 import org.springframework.security.web.csrf.CookieCsrfTokenRepository;
 import org.springframework.security.web.csrf.CsrfTokenRequestAttributeHandler;
@@ -32,6 +35,8 @@ public class CameraSecurityConfig {
                 .requestMatchers(HttpMethod.POST, "/api/cameras/auth/token").permitAll()
                 .anyRequest().hasRole("ADMIN"))
             .addFilterBefore(new BearerTokenFilter(tokens), AnonymousAuthenticationFilter.class)
+            .addFilterBefore(new ForgottenDeviceSessionFilter(rememberDevice), RememberMeAuthenticationFilter.class)
+            .addFilterAfter(new RememberedLoginCsrfFilter(), RememberMeAuthenticationFilter.class)
             .csrf(csrf -> csrf
                 .csrfTokenRepository(CookieCsrfTokenRepository.withHttpOnlyFalse())
                 .csrfTokenRequestHandler(new CsrfTokenRequestAttributeHandler())

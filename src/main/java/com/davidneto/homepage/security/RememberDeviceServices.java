@@ -2,6 +2,7 @@ package com.davidneto.homepage.security;
 
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
+import jakarta.servlet.http.HttpSession;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.security.core.Authentication;
@@ -22,7 +23,9 @@ import java.time.Duration;
 import java.time.Instant;
 import java.util.Base64;
 import java.util.HexFormat;
+import java.util.Map;
 import java.util.Optional;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.regex.Pattern;
 
 /**
@@ -36,6 +39,9 @@ import java.util.regex.Pattern;
  * hourly) and the cookie is re-issued with a fresh 90-day max-age.
  *
  * <p>Only the SHA-256 of the token is stored, compared in constant time. Cookie values are never logged.
+ *
+ * <p>A session signed in by the cookie remembers its series ({@link #SERIES_ATTRIBUTE}); once that
+ * device is forgotten ("Sign out all devices") the session ends too (see {@link ForgottenDeviceSessionFilter}).
  */
 public class RememberDeviceServices extends AbstractRememberMeServices {
 
@@ -45,12 +51,22 @@ public class RememberDeviceServices extends AbstractRememberMeServices {
     private static final Duration TOUCH_EVERY = Duration.ofHours(1);
     private static final Pattern PART = Pattern.compile("[A-Za-z0-9_-]{43}");
     private static final String ADMIN_ROLE = "ROLE_ADMIN";
+    /** How long a "this device is still remembered" answer is trusted before asking the database again. */
+    private static final Duration RECHECK_EVERY = Duration.ofSeconds(5);
+
+    /** Session attribute: the series of the remembered device that signed this session in. */
+    public static final String SERIES_ATTRIBUTE = RememberDeviceServices.class.getName() + ".SERIES";
+    /** Request attribute: this request was signed in by the cookie. */
+    public static final String SIGNED_IN_NOW_ATTRIBUTE = RememberDeviceServices.class.getName() + ".SIGNED_IN_NOW";
 
     private static final Logger log = LoggerFactory.getLogger(RememberDeviceServices.class);
 
     private final AdminRememberTokenRepository repo;
     private final Clock clock;
     private final SecureRandom random = new SecureRandom();
+    /** series -> trusted until; guarded by itself for writes, so a revoke never leaves a stale "yes" behind. */
+    private final Map<String, Instant> stillRemembered = new ConcurrentHashMap<>();
+    private long generation;
 
     public RememberDeviceServices(String key, UserDetailsService users, AdminRememberTokenRepository repo,
                                   Clock clock, boolean secureCookie) {
@@ -74,7 +90,7 @@ public class RememberDeviceServices extends AbstractRememberMeServices {
     @Override
     protected void onLoginSuccess(HttpServletRequest request, HttpServletResponse response, Authentication auth) {
         Instant now = clock.instant();
-        repo.deleteIdleSince(now.minus(LIFETIME)); // purge long-idle devices
+        if (repo.deleteIdleSince(now.minus(LIFETIME)) > 0) forgetCache(); // purge long-idle devices
         forgetPresentedDevice(request);            // signing in again on this browser replaces its row
 
         String series = randomPart();
@@ -106,6 +122,7 @@ public class RememberDeviceServices extends AbstractRememberMeServices {
         Instant now = clock.instant();
         if (row.getLastUsedAt().plus(LIFETIME).isBefore(now)) {
             repo.deleteBySeries(series);
+            forgetCache();
             throw refused(ip, "expired");
         }
         UserDetails user;
@@ -119,6 +136,8 @@ public class RememberDeviceServices extends AbstractRememberMeServices {
 
         repo.touch(series, now, now.minus(TOUCH_EVERY));
         setCookie(new String[] {series, parts[1]}, getTokenValiditySeconds(), request, response);
+        request.getSession().setAttribute(SERIES_ATTRIBUTE, series);
+        request.setAttribute(SIGNED_IN_NOW_ATTRIBUTE, Boolean.TRUE);
         log.info("remembered login ip={} user={}", ip, user.getUsername());
         return user;
     }
@@ -130,9 +149,40 @@ public class RememberDeviceServices extends AbstractRememberMeServices {
         super.logout(request, response, authentication);
     }
 
-    /** "Sign out all devices": forgets every remembered browser. Returns how many. */
-    public int forgetAll() {
-        return repo.deleteEvery();
+    /**
+     * "Sign out all devices": forgets every remembered browser, which also ends every live session
+     * those browsers signed in, except the caller's own (it is the one asking). Returns how many.
+     */
+    public int forgetAll(HttpServletRequest caller) {
+        int n = repo.deleteEvery();
+        forgetCache();
+        HttpSession own = caller.getSession(false);
+        if (own != null) own.removeAttribute(SERIES_ATTRIBUTE);
+        return n;
+    }
+
+    /** True while the device {@code series} is remembered (answers are trusted for a few seconds). */
+    public boolean isRemembered(String series) {
+        Instant now = clock.instant();
+        Instant until = stillRemembered.get(series);
+        if (until != null && now.isBefore(until)) return true;
+        long asked;
+        synchronized (stillRemembered) {
+            asked = generation;
+        }
+        boolean exists = repo.existsById(series);
+        synchronized (stillRemembered) {
+            if (!exists) stillRemembered.remove(series);
+            else if (asked == generation) stillRemembered.put(series, now.plus(RECHECK_EVERY));
+        }
+        return exists;
+    }
+
+    private void forgetCache() {
+        synchronized (stillRemembered) {
+            generation++;
+            stillRemembered.clear();
+        }
     }
 
     /** Plain {@code series:token} (both base64url, so no escaping is needed). */
@@ -152,7 +202,10 @@ public class RememberDeviceServices extends AbstractRememberMeServices {
         String[] parts = decodeCookie(raw);
         if (parts.length != 2 || !PART.matcher(parts[0]).matches()) return;
         Optional<AdminRememberToken> row = repo.findById(parts[0]);
-        if (row.isPresent() && matches(row.get(), parts[1])) repo.deleteBySeries(parts[0]);
+        if (row.isPresent() && matches(row.get(), parts[1])) {
+            repo.deleteBySeries(parts[0]);
+            forgetCache();
+        }
     }
 
     private RememberMeAuthenticationException refused(String ip, String reason) {

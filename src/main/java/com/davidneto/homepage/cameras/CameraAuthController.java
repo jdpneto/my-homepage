@@ -68,10 +68,10 @@ public class CameraAuthController {
         return ResponseEntity.noContent().build();
     }
 
-    /** "Sign out all devices": every app token and every remembered browser. */
+    /** "Sign out all devices": every app token, every remembered browser and the sessions they signed in. */
     @PostMapping("/revoke-all")
-    public Map<String, Integer> revokeAll() {
-        return Map.of("revoked", tokens.revokeAll(), "devices", rememberDevice.forgetAll());
+    public Map<String, Integer> revokeAll(HttpServletRequest request) {
+        return Map.of("revoked", tokens.revokeAll(), "devices", rememberDevice.forgetAll(request));
     }
 
     private boolean credentialsValid(String username, String password) {

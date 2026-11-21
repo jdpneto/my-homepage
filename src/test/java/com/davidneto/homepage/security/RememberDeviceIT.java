@@ -14,6 +14,8 @@ import org.springframework.security.core.GrantedAuthority;
 import org.springframework.security.core.userdetails.User;
 import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
 import org.springframework.security.provisioning.InMemoryUserDetailsManager;
+import org.springframework.security.test.web.support.WebTestUtils;
+import org.springframework.security.web.csrf.CookieCsrfTokenRepository;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.MvcResult;
@@ -296,6 +298,125 @@ class RememberDeviceIT {
         assertThat(remembered.count()).isZero();
         assertThat(signedIn(c)).isFalse();
         assertThat(signedIn(other)).isFalse();
+    }
+
+    @Test
+    void revokeAllSignsOutLiveRememberedSessions() throws Exception {
+        // Device A (the phone, or a stolen cookie) signed in by its cookie and keeps that session.
+        Cookie a = rememberedDevice();
+        MvcResult first = mvc.perform(get("/admin/posts").cookie(a)).andReturn();
+        assertThat(first.getResponse().getStatus()).isEqualTo(200);
+        MockHttpSession sessionA = (MockHttpSession) first.getRequest().getSession(false);
+        assertThat(sessionA).isNotNull();
+        // A is polling the camera page
+        assertThat(mvc.perform(get("/api/cameras/cameras").session(sessionA)).andReturn().getResponse().getStatus())
+                .isEqualTo(200);
+
+        // The owner, signed in with the password in another browser, signs out all devices.
+        MockHttpSession owner = (MockHttpSession) login(false, null).getRequest().getSession(false);
+        MockHttpServletResponse rev = mvc.perform(post("/api/cameras/auth/revoke-all").session(owner).with(csrf()))
+                .andReturn().getResponse();
+        assertThat(rev.getStatus()).isEqualTo(200);
+
+        // A's live session is gone, with or without its (now forgotten) cookie.
+        assertThat(mvc.perform(get("/api/cameras/cameras").session(sessionA)).andReturn().getResponse().getStatus())
+                .isEqualTo(401);
+        MockHttpServletResponse page = mvc.perform(get("/admin/posts").session(sessionA).cookie(a))
+                .andReturn().getResponse();
+        assertThat(page.getRedirectedUrl()).endsWith("/admin/login");
+        // The owner's own session is unaffected.
+        assertThat(mvc.perform(get("/admin/posts").session(owner)).andReturn().getResponse().getStatus()).isEqualTo(200);
+    }
+
+    @Test
+    void revokeAllKeepsTheCallersRememberedSession() throws Exception {
+        Cookie c = rememberedDevice();
+        MvcResult first = mvc.perform(get("/admin/cameras").cookie(c)).andReturn();
+        MockHttpSession s = (MockHttpSession) first.getRequest().getSession(false);
+        mvc.perform(post("/api/cameras/auth/revoke-all").session(s).with(csrf())).andReturn();
+        assertThat(remembered.count()).isZero();
+        assertThat(mvc.perform(get("/api/cameras/cameras").session(s)).andReturn().getResponse().getStatus())
+                .isEqualTo(200);
+        assertThat(signedIn(c)).isFalse(); // the cookie itself is forgotten
+    }
+
+    // ------------------------------------------------------------------ CSRF after a remembered sign-in
+
+    static final String OLD_XSRF = "old-token-value-5678";
+
+    /**
+     * What the browser's XSRF-TOKEN cookie holds after {@code r} (the last Set-Cookie wins; Max-Age=0
+     * deletes it), starting from {@code before}. Null when there is none.
+     */
+    static String xsrfJar(MockHttpServletResponse r, String before) {
+        String jar = before;
+        for (String h : r.getHeaders("Set-Cookie")) {
+            if (!h.startsWith("XSRF-TOKEN=")) continue;
+            int semi = h.indexOf(';');
+            String value = h.substring("XSRF-TOKEN=".length(), semi < 0 ? h.length() : semi);
+            jar = h.contains("Max-Age=0") || value.isEmpty() ? null : value;
+        }
+        return jar;
+    }
+
+    /**
+     * {@code .with(csrf())} (used by other tests on the shared context) swaps the chains' CSRF repository
+     * for a session-based test one. These tests need what the browser gets: the cookie repository.
+     */
+    void realCsrfRepositories() {
+        for (String url : List.of("/api/cameras/status", "/admin/cameras")) {
+            MockHttpServletRequest req = new MockHttpServletRequest(ctx.getServletContext(), "GET", url);
+            WebTestUtils.setCsrfTokenRepository(req, CookieCsrfTokenRepository.withHttpOnlyFalse());
+        }
+    }
+
+    /** cameras.js csrfToken(): the cookie if present, else the page's meta (still the old token). */
+    MockHttpServletResponse writeLikeThePage(MockHttpSession s, Cookie device, String jar) throws Exception {
+        var req = post("/api/cameras/auth/revoke-all").session(s).header("X-XSRF-TOKEN", jar != null ? jar : OLD_XSRF);
+        if (jar != null) req.cookie(device, new Cookie("XSRF-TOKEN", jar));
+        else req.cookie(device);
+        return mvc.perform(req).andReturn().getResponse();
+    }
+
+    @Test
+    void writeWorksAfterRememberedSignInOnAnApiPoll() throws Exception {
+        Cookie c = rememberedDevice();
+        realCsrfRepositories();
+        // The page is open, the session ended; the 3 s poll signs in again with the cookie.
+        MvcResult poll = mvc.perform(get("/api/cameras/status").cookie(c, new Cookie("XSRF-TOKEN", OLD_XSRF)))
+                .andReturn();
+        assertThat(poll.getResponse().getStatus()).isEqualTo(200);
+        MockHttpSession s = (MockHttpSession) poll.getRequest().getSession(false);
+        String jar = xsrfJar(poll.getResponse(), OLD_XSRF);
+        // Then the user taps a button.
+        MockHttpServletResponse w = writeLikeThePage(s, c, jar);
+        assertThat(w.getStatus()).as(w.getContentAsString()).isEqualTo(200);
+    }
+
+    @Test
+    void secondWriteWorksWhenTheFirstWriteSignedIn() throws Exception {
+        Cookie c = rememberedDevice();
+        realCsrfRepositories();
+        MvcResult first = mvc.perform(post("/api/cameras/auth/revoke-all")
+                .cookie(c, new Cookie("XSRF-TOKEN", OLD_XSRF)).header("X-XSRF-TOKEN", OLD_XSRF)).andReturn();
+        assertThat(first.getResponse().getStatus()).isEqualTo(200);
+        MockHttpSession s = (MockHttpSession) first.getRequest().getSession(false);
+        String jar = xsrfJar(first.getResponse(), OLD_XSRF);
+        MockHttpServletResponse w = writeLikeThePage(s, c, jar);
+        assertThat(w.getStatus()).as(w.getContentAsString()).isEqualTo(200);
+    }
+
+    @Test
+    void pageWriteWorksAfterRememberedSignInOnAPageLoad() throws Exception {
+        Cookie c = rememberedDevice();
+        realCsrfRepositories();
+        MvcResult page = mvc.perform(get("/admin/cameras").cookie(c, new Cookie("XSRF-TOKEN", OLD_XSRF))).andReturn();
+        assertThat(page.getResponse().getStatus()).isEqualTo(200);
+        MockHttpSession s = (MockHttpSession) page.getRequest().getSession(false);
+        String jar = xsrfJar(page.getResponse(), OLD_XSRF);
+        assertThat(jar).isNotNull().isNotEqualTo(OLD_XSRF);
+        MockHttpServletResponse w = writeLikeThePage(s, c, jar);
+        assertThat(w.getStatus()).as(w.getContentAsString()).isEqualTo(200);
     }
 
     // ------------------------------------------------------------------ never the gallery

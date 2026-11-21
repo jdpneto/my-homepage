@@ -5,7 +5,9 @@ import com.davidneto.homepage.security.LoginRateLimiter;
 import com.davidneto.homepage.security.RateLimitAuthenticationFailureHandler;
 import com.davidneto.homepage.security.RateLimitAuthenticationSuccessHandler;
 import com.davidneto.homepage.security.AdminRememberTokenRepository;
+import com.davidneto.homepage.security.ForgottenDeviceSessionFilter;
 import com.davidneto.homepage.security.RememberDeviceServices;
+import com.davidneto.homepage.security.RememberedLoginCsrfFilter;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
@@ -20,6 +22,7 @@ import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.security.provisioning.InMemoryUserDetailsManager;
 import org.springframework.security.web.SecurityFilterChain;
+import org.springframework.security.web.authentication.rememberme.RememberMeAuthenticationFilter;
 import org.springframework.security.web.authentication.UsernamePasswordAuthenticationFilter;
 import org.springframework.security.web.csrf.CookieCsrfTokenRepository;
 import org.springframework.security.web.csrf.CsrfTokenRequestAttributeHandler;
@@ -84,7 +87,9 @@ public class SecurityConfig {
                 .csrfTokenRepository(CookieCsrfTokenRepository.withHttpOnlyFalse())
                 .csrfTokenRequestHandler(new CsrfTokenRequestAttributeHandler())
             )
-            .addFilterBefore(new LoginRateLimitFilter(limiter), UsernamePasswordAuthenticationFilter.class);
+            .addFilterBefore(new LoginRateLimitFilter(limiter), UsernamePasswordAuthenticationFilter.class)
+            .addFilterBefore(new ForgottenDeviceSessionFilter(rememberDevice), RememberMeAuthenticationFilter.class)
+            .addFilterAfter(new RememberedLoginCsrfFilter(), RememberMeAuthenticationFilter.class);
 
         return http.build();
     }
