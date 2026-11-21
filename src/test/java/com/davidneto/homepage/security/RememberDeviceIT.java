@@ -329,6 +329,40 @@ class RememberDeviceIT {
     }
 
     @Test
+    void revokeAllSignsOutPasswordSessionsToo() throws Exception {
+        // The lost phone had just signed in with the password (ticked or not): its live session must end too.
+        MockHttpSession lost = (MockHttpSession) login(true, null).getRequest().getSession(false);
+        MockHttpSession lostNoBox = (MockHttpSession) login(false, null).getRequest().getSession(false);
+        assertThat(mvc.perform(get("/api/cameras/cameras").session(lost)).andReturn().getResponse().getStatus())
+                .isEqualTo(200);
+        MockHttpSession owner = (MockHttpSession) login(false, null).getRequest().getSession(false);
+        assertThat(mvc.perform(post("/api/cameras/auth/revoke-all").session(owner).with(csrf()))
+                .andReturn().getResponse().getStatus()).isEqualTo(200);
+        for (MockHttpSession s : new MockHttpSession[]{lost, lostNoBox}) {
+            assertThat(mvc.perform(get("/api/cameras/cameras").session(s)).andReturn().getResponse().getStatus())
+                    .isEqualTo(401);
+            assertThat(mvc.perform(get("/admin/posts").session(s)).andReturn().getResponse().getRedirectedUrl())
+                    .endsWith("/admin/login");
+        }
+        assertThat(mvc.perform(get("/admin/posts").session(owner)).andReturn().getResponse().getStatus()).isEqualTo(200);
+        // Signing in again afterwards works normally.
+        MockHttpSession again = (MockHttpSession) login(false, null).getRequest().getSession(false);
+        assertThat(mvc.perform(get("/api/cameras/cameras").session(again)).andReturn().getResponse().getStatus())
+                .isEqualTo(200);
+    }
+
+    @Test
+    void revokeAllLeavesFamilyGallerySessionsAlone() throws Exception {
+        MvcResult fam = mvc.perform(post("/mae/login").param("password", "testfamily").with(csrf())).andReturn();
+        MockHttpSession family = (MockHttpSession) fam.getRequest().getSession(false);
+        MockHttpSession owner = (MockHttpSession) login(false, null).getRequest().getSession(false);
+        assertThat(mvc.perform(post("/api/cameras/auth/revoke-all").session(owner).with(csrf()))
+                .andReturn().getResponse().getStatus()).isEqualTo(200);
+        mvc.perform(get("/").session(family)); // a public page served by the admin chain
+        assertThat(mvc.perform(get("/mae").session(family)).andReturn().getResponse().getStatus()).isEqualTo(200);
+    }
+
+    @Test
     void revokeAllKeepsTheCallersRememberedSession() throws Exception {
         Cookie c = rememberedDevice();
         MvcResult first = mvc.perform(get("/admin/cameras").cookie(c)).andReturn();

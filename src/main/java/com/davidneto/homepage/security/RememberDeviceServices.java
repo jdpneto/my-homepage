@@ -58,6 +58,15 @@ public class RememberDeviceServices extends AbstractRememberMeServices {
     public static final String SERIES_ATTRIBUTE = RememberDeviceServices.class.getName() + ".SERIES";
     /** Request attribute: this request was signed in by the cookie. */
     public static final String SIGNED_IN_NOW_ATTRIBUTE = RememberDeviceServices.class.getName() + ".SIGNED_IN_NOW";
+    /** When a session signed in (epoch millis, system time); falls back to the session's creation time. */
+    public static final String SIGNED_IN_AT_ATTRIBUTE = RememberDeviceServices.class.getName() + ".SIGNED_IN_AT";
+
+    /**
+     * Time of the last "Sign out all devices" (epoch millis, system time; 0 = never). Sessions live in
+     * memory only (a restart ends them all), so this does too. Every admin session that signed in
+     * before it ends, password or remembered, except the caller's.
+     */
+    private volatile long signedOutAllAt;
 
     private static final Logger log = LoggerFactory.getLogger(RememberDeviceServices.class);
 
@@ -137,6 +146,7 @@ public class RememberDeviceServices extends AbstractRememberMeServices {
         repo.touch(series, now, now.minus(TOUCH_EVERY));
         setCookie(new String[] {series, parts[1]}, getTokenValiditySeconds(), request, response);
         request.getSession().setAttribute(SERIES_ATTRIBUTE, series);
+        stampSignIn(request);
         request.setAttribute(SIGNED_IN_NOW_ATTRIBUTE, Boolean.TRUE);
         log.info("remembered login ip={} user={}", ip, user.getUsername());
         return user;
@@ -154,11 +164,36 @@ public class RememberDeviceServices extends AbstractRememberMeServices {
      * those browsers signed in, except the caller's own (it is the one asking). Returns how many.
      */
     public int forgetAll(HttpServletRequest caller) {
+        long now = System.currentTimeMillis();
+        signedOutAllAt = now; // every other admin session that signed in before now ends
         int n = repo.deleteEvery();
         forgetCache();
         HttpSession own = caller.getSession(false);
-        if (own != null) own.removeAttribute(SERIES_ATTRIBUTE);
+        if (own != null) {
+            own.removeAttribute(SERIES_ATTRIBUTE);
+            own.setAttribute(SIGNED_IN_AT_ATTRIBUTE, now); // the caller stays signed in
+        }
         return n;
+    }
+
+    /** Every sign-in (password or remembered) records when it happened in its session. */
+    @Override
+    public void loginSuccess(HttpServletRequest request, jakarta.servlet.http.HttpServletResponse response,
+                             org.springframework.security.core.Authentication auth) {
+        stampSignIn(request);
+        super.loginSuccess(request, response, auth);
+    }
+
+    private void stampSignIn(HttpServletRequest request) {
+        request.getSession().setAttribute(SIGNED_IN_AT_ATTRIBUTE, System.currentTimeMillis());
+    }
+
+    /** True when this session signed in (or, unrecorded, was created) before the last "Sign out all devices". */
+    public boolean signedOutByRevokeAll(HttpSession session) {
+        long cutoff = signedOutAllAt;
+        if (cutoff == 0) return false;
+        long since = session.getAttribute(SIGNED_IN_AT_ATTRIBUTE) instanceof Long at ? at : session.getCreationTime();
+        return since < cutoff;
     }
 
     /** True while the device {@code series} is remembered (answers are trusted for a few seconds). */
