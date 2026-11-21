@@ -1109,7 +1109,7 @@ body:has(.cam-player:not([hidden])) .cam-toast {
     }
 }
 
-/* "Sign out all app devices" armed for confirmation (same look as the armed Delete). */
+/* "Sign out all devices" armed for confirmation (same look as the armed Delete). */
 #revoke-all.confirm {
     background: var(--red, #ff4d4d);
     color: #0a0a0a;

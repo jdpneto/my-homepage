@@ -226,6 +226,14 @@ class AdminCamerasPageIT {
     }
 
     @Test
+    void revokeButtonSignsOutAllDevicesIncludingRemembered() throws Exception {
+        assertThat(page("/admin/cameras")).contains(">Sign out all devices</button>")
+                .doesNotContain("Sign out all app devices");
+        String js = mvc.perform(get("/js/cameras.js")).andReturn().getResponse().getContentAsString();
+        assertThat(js).contains("body.devices").contains("remembered");
+    }
+
+    @Test
     void navLogoutIsAPostFormThatLogsOut() throws Exception {
         String html = page("/admin/cameras");
         assertThat(html).contains("<form").contains("action=\"/admin/logout\"").contains("method=\"post\"");

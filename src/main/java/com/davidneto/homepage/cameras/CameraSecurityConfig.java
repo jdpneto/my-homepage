@@ -1,5 +1,6 @@
 package com.davidneto.homepage.cameras;
 
+import com.davidneto.homepage.security.RememberDeviceServices;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.core.annotation.Order;
@@ -15,13 +16,16 @@ import org.springframework.security.web.header.writers.StaticHeadersWriter;
 /**
  * /api/cameras/**: the admin's web session (CSRF-protected) or an app bearer token (no CSRF,
  * no session). Everything except token login requires ROLE_ADMIN. 401 JSON, never a redirect.
+ * A remembered admin device (cookie) signs in here too, so an API call after the session expired
+ * does not show "Signed out"; never when an Authorization header is present.
  */
 @Configuration
 public class CameraSecurityConfig {
 
     @Bean
     @Order(0)
-    public SecurityFilterChain cameraApiChain(HttpSecurity http, CameraTokenService tokens) throws Exception {
+    public SecurityFilterChain cameraApiChain(HttpSecurity http, CameraTokenService tokens,
+                                              RememberDeviceServices rememberDevice) throws Exception {
         http
             .securityMatcher("/api/cameras/**")
             .authorizeHttpRequests(auth -> auth
@@ -35,6 +39,9 @@ public class CameraSecurityConfig {
                     request -> CameraTokenService.bearer(request.getHeader("Authorization")) != null,
                     request -> "POST".equals(request.getMethod())
                             && "/api/cameras/auth/token".equals(request.getRequestURI())))
+            .rememberMe(remember -> remember
+                .rememberMeServices(rememberDevice)
+                .key(rememberDevice.getKey()))
             .formLogin(AbstractHttpConfigurer::disable)
             .httpBasic(AbstractHttpConfigurer::disable)
             .logout(AbstractHttpConfigurer::disable)

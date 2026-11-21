@@ -1,7 +1,9 @@
 package com.davidneto.homepage.controller;
 
+import com.davidneto.homepage.config.ClockConfig;
 import com.davidneto.homepage.config.SecurityConfig;
 import com.davidneto.homepage.entity.BlogPost;
+import com.davidneto.homepage.security.AdminRememberTokenRepository;
 import com.davidneto.homepage.security.LoginRateLimiter;
 import com.davidneto.homepage.service.BlogPostService;
 import com.davidneto.homepage.service.MarkdownService;
@@ -27,7 +29,7 @@ import static org.springframework.test.web.servlet.request.MockMvcRequestBuilder
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.*;
 
 @WebMvcTest(BlogController.class)
-@Import(SecurityConfig.class)
+@Import({SecurityConfig.class, ClockConfig.class})
 @TestPropertySource(properties = {
         "app.admin.username=admin",
         "app.admin.password=password"
@@ -45,6 +47,9 @@ class BlogControllerTest {
 
     @MockitoBean
     private LoginRateLimiter loginRateLimiter;
+
+    @MockitoBean
+    private AdminRememberTokenRepository adminRememberTokenRepository;
 
     @MockitoBean
     private BlogPostService blogPostService;

@@ -4,6 +4,8 @@ import com.davidneto.homepage.security.LoginRateLimitFilter;
 import com.davidneto.homepage.security.LoginRateLimiter;
 import com.davidneto.homepage.security.RateLimitAuthenticationFailureHandler;
 import com.davidneto.homepage.security.RateLimitAuthenticationSuccessHandler;
+import com.davidneto.homepage.security.AdminRememberTokenRepository;
+import com.davidneto.homepage.security.RememberDeviceServices;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
@@ -11,6 +13,7 @@ import org.springframework.core.annotation.Order;
 import org.springframework.security.config.annotation.web.builders.HttpSecurity;
 import org.springframework.security.core.userdetails.User;
 import org.springframework.security.authentication.ProviderManager;
+import org.springframework.security.authentication.RememberMeAuthenticationProvider;
 import org.springframework.security.authentication.dao.DaoAuthenticationProvider;
 import org.springframework.security.core.userdetails.UserDetailsService;
 import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
@@ -23,6 +26,10 @@ import org.springframework.security.web.csrf.CsrfTokenRequestAttributeHandler;
 import org.springframework.security.config.annotation.web.configuration.WebSecurityCustomizer;
 import org.springframework.security.web.firewall.HttpFirewall;
 import org.springframework.security.web.firewall.StrictHttpFirewall;
+
+import java.security.SecureRandom;
+import java.time.Clock;
+import java.util.HexFormat;
 
 @Configuration
 public class SecurityConfig {
@@ -37,12 +44,18 @@ public class SecurityConfig {
     @Order(2)
     public SecurityFilterChain filterChain(HttpSecurity http, LoginRateLimiter limiter,
                                            UserDetailsService userDetailsService,
-                                           PasswordEncoder passwordEncoder) throws Exception {
-        // /admin authenticates only the admin user (username AND password) and grants ROLE_ADMIN.
+                                           PasswordEncoder passwordEncoder,
+                                           RememberDeviceServices rememberDevice) throws Exception {
+        // /admin authenticates only the admin user (username AND password) and grants ROLE_ADMIN,
+        // or a remembered device of that user (see RememberDeviceServices).
         DaoAuthenticationProvider adminProvider = new DaoAuthenticationProvider(userDetailsService);
         adminProvider.setPasswordEncoder(passwordEncoder);
+        // After login: the page that was asked for (saved request), else Posts.
+        RateLimitAuthenticationSuccessHandler success = new RateLimitAuthenticationSuccessHandler(limiter, "/admin/posts");
+        success.setAlwaysUseDefaultTargetUrl(false);
         http
-            .authenticationManager(new ProviderManager(adminProvider))
+            .authenticationManager(new ProviderManager(adminProvider,
+                    new RememberMeAuthenticationProvider(rememberDevice.getKey())))
             .authorizeHttpRequests(auth -> auth
                 .requestMatchers("/webdav/**").permitAll()
                 .requestMatchers("/api/webdav/**").permitAll()
@@ -53,9 +66,13 @@ public class SecurityConfig {
             )
             .formLogin(form -> form
                 .loginPage("/admin/login")
-                .successHandler(new RateLimitAuthenticationSuccessHandler(limiter, "/admin/posts"))
+                .successHandler(success)
                 .failureHandler(new RateLimitAuthenticationFailureHandler(limiter))
                 .permitAll()
+            )
+            .rememberMe(remember -> remember
+                .rememberMeServices(rememberDevice)
+                .key(rememberDevice.getKey())
             )
             .logout(logout -> logout
                 .logoutUrl("/admin/logout")
@@ -70,6 +87,19 @@ public class SecurityConfig {
             .addFilterBefore(new LoginRateLimitFilter(limiter), UsernamePasswordAuthenticationFilter.class);
 
         return http.build();
+    }
+
+    /**
+     * Shared by the admin chain and the camera API chain (never the gallery chain). The key only ties
+     * the services to the provider within one run; remembered devices live in the database.
+     */
+    @Bean
+    public RememberDeviceServices rememberDeviceServices(UserDetailsService userDetailsService,
+                                                         AdminRememberTokenRepository repo, Clock clock,
+                                                         @Value("${app.admin.remember-me.secure-cookie:true}") boolean secure) {
+        byte[] key = new byte[32];
+        new SecureRandom().nextBytes(key);
+        return new RememberDeviceServices(HexFormat.of().formatHex(key), userDetailsService, repo, clock, secure);
     }
 
     @Bean

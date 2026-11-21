@@ -1341,7 +1341,7 @@
         el.addEventListener('click', () => guarded(el, handler));
     }
 
-    // "Sign out all app devices" asks first, like Delete: the first click arms "Yes, sign out all"
+    // "Sign out all devices" (app tokens and remembered browsers) asks first, like Delete: the first click arms "Yes, sign out all"
     // for 4 s; a second click (not the other half of a double-click) does it.
     const revokeBtn = document.getElementById('revoke-all');
     if (revokeBtn) {
@@ -1369,10 +1369,12 @@
             guarded(revokeBtn, async () => {
                 try {
                     const body = await api('/auth/revoke-all', 'POST');
-                    const n = Number(body && body.revoked) || 0;
-                    toast('Signed out ' + n + (n === 1 ? ' app device' : ' app devices'));
+                    const apps = Number(body && body.revoked) || 0;
+                    const devices = Number(body && body.devices) || 0;
+                    toast('Signed out ' + apps + (apps === 1 ? ' app' : ' apps') + ' and '
+                        + devices + (devices === 1 ? ' remembered browser' : ' remembered browsers'));
                 } catch (err) {
-                    failed('Signing out app devices', err);
+                    failed('Signing out all devices', err);
                 }
             });
         });

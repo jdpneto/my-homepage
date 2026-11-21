@@ -1,7 +1,9 @@
 package com.davidneto.homepage.controller;
 
+import com.davidneto.homepage.config.ClockConfig;
 import com.davidneto.homepage.config.SecurityConfig;
 import com.davidneto.homepage.entity.Image;
+import com.davidneto.homepage.security.AdminRememberTokenRepository;
 import com.davidneto.homepage.security.LoginRateLimiter;
 import com.davidneto.homepage.entity.OwnerType;
 import com.davidneto.homepage.service.ImageService;
@@ -28,7 +30,7 @@ import static org.springframework.test.web.servlet.request.MockMvcRequestBuilder
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.*;
 
 @WebMvcTest(ImageApiController.class)
-@Import(SecurityConfig.class)
+@Import({SecurityConfig.class, ClockConfig.class})
 @TestPropertySource(properties = {
         "app.admin.username=admin",
         "app.admin.password=testpass",
@@ -47,6 +49,9 @@ class ImageApiControllerTest {
 
     @MockitoBean
     private LoginRateLimiter loginRateLimiter;
+
+    @MockitoBean
+    private AdminRememberTokenRepository adminRememberTokenRepository;
 
     @MockitoBean
     private ImageService imageService;

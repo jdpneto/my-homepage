@@ -1,6 +1,7 @@
 package com.davidneto.homepage.cameras;
 
 import com.davidneto.homepage.security.LoginRateLimiter;
+import com.davidneto.homepage.security.RememberDeviceServices;
 import jakarta.servlet.http.HttpServletRequest;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
@@ -28,12 +29,14 @@ public class CameraAuthController {
     private final UserDetailsService userDetails;
     private final PasswordEncoder encoder;
     private final LoginRateLimiter limiter;
+    private final RememberDeviceServices rememberDevice;
     /** Hash used for unknown usernames so both paths cost one BCrypt check. */
     private final String dummyHash;
 
     public CameraAuthController(CameraTokenService tokens, UserDetailsService userDetails, PasswordEncoder encoder,
-                                LoginRateLimiter limiter) {
+                                LoginRateLimiter limiter, RememberDeviceServices rememberDevice) {
         this.tokens = tokens;
+        this.rememberDevice = rememberDevice;
         this.userDetails = userDetails;
         this.encoder = encoder;
         this.limiter = limiter;
@@ -65,9 +68,10 @@ public class CameraAuthController {
         return ResponseEntity.noContent().build();
     }
 
+    /** "Sign out all devices": every app token and every remembered browser. */
     @PostMapping("/revoke-all")
     public Map<String, Integer> revokeAll() {
-        return Map.of("revoked", tokens.revokeAll());
+        return Map.of("revoked", tokens.revokeAll(), "devices", rememberDevice.forgetAll());
     }
 
     private boolean credentialsValid(String username, String password) {
