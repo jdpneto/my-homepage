@@ -276,4 +276,29 @@ class AdminCamerasPageIT {
         String js = mvc.perform(get("/js/cameras.js")).andReturn().getResponse().getContentAsString();
         assertThat(js).contains("/clips/delete").contains("Yes, delete").contains("kept stay");
     }
+
+    static String healthLine(String html) {
+        java.util.regex.Matcher m = java.util.regex.Pattern.compile("<div class=\"cam-health\"[^>]*>([^<]*)</div>").matcher(html);
+        assertThat(m.find()).isTrue();
+        return m.group(1);
+    }
+
+    @Test
+    void healthLineShowsMode() throws Exception {
+        String now = OffsetDateTime.now().toString();
+        Files.writeString(root.resolve("heartbeat.json"),
+                "{\"time\":\"" + now + "\",\"hub_ok\":true,\"mode\":\"home\"}");
+        assertThat(healthLine(page("/admin/cameras"))).endsWith("Hub OK · mode: home");
+
+        Files.writeString(root.resolve("heartbeat.json"), "{\"time\":\"" + now + "\",\"hub_ok\":true}");
+        assertThat(healthLine(page("/admin/cameras"))).endsWith("Hub OK").doesNotContain("mode:");
+
+        Files.writeString(root.resolve("heartbeat.json"),
+                "{\"time\":\"" + now + "\",\"hub_ok\":true,\"mode\":null}");
+        assertThat(healthLine(page("/admin/cameras"))).doesNotContain("mode:");
+
+        Files.writeString(root.resolve("heartbeat.json"),
+                "{\"time\":\"" + now + "\",\"hub_ok\":true,\"mode\":\" \"}");
+        assertThat(healthLine(page("/admin/cameras"))).doesNotContain("mode:");
+    }
 }

@@ -11,7 +11,10 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Clock;
 import java.time.Instant;
+import java.time.OffsetDateTime;
 import java.time.ZoneOffset;
+import java.util.ArrayList;
+import java.util.List;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -23,6 +26,8 @@ class ClipIndexerTest {
     @TempDir Path tmp;
     Path root;
     ClipFiles files;
+    ClipThumbnailer thumbs;
+    Clock clock;
     ClipIndexer indexer;
 
     @BeforeEach
@@ -35,9 +40,9 @@ class ClipIndexerTest {
         props.setRootDir(root);
         props.setThumbsDir(tmp.resolve("thumbs"));
         files = new ClipFiles(props);
-        ClipThumbnailer thumbs = new ClipThumbnailer(props, files, (mp4, jpg) -> Files.write(jpg, new byte[]{1}));
-        indexer = new ClipIndexer(files, thumbs, repo,
-                Clock.fixed(Instant.parse("2026-11-18T21:00:00Z"), ZoneOffset.UTC));
+        thumbs = new ClipThumbnailer(props, files, (mp4, jpg) -> Files.write(jpg, new byte[]{1}));
+        clock = Clock.fixed(Instant.parse("2026-11-18T21:00:00Z"), ZoneOffset.UTC);
+        indexer = new ClipIndexer(files, thumbs, repo, clock);
     }
 
     @Test
@@ -57,6 +62,40 @@ class ClipIndexerTest {
         assertThat(c.getThumbPath()).isNotNull();
         assertThat(c.isKept()).isFalse();
         assertThat(indexer.reconcile().added()).isZero(); // idempotent
+    }
+
+    @Test
+    void newClipsAreHandedToThePushNotifier() throws Exception {
+        List<OffsetDateTime> handed = new ArrayList<>();
+        List<Instant> at = new ArrayList<>();
+        indexer = new ClipIndexer(files, thumbs, repo, clock, (s, indexedAt) -> {
+            handed.add(s.start());
+            at.add(indexedAt);
+        });
+        ClipFilesTest.clip(root, "Garage/2026-11-18/21-45-49", ClipFilesTest.SIDECAR);
+        indexer.reconcile();
+        assertThat(handed).containsExactly(OffsetDateTime.parse("2026-11-18T21:45:49+01:00"));
+        assertThat(at).containsExactly(Instant.parse("2026-11-18T21:00:00Z"));
+
+        // existing rows are never handed again; only the newly added clip is
+        ClipFilesTest.clip(root, "Garage/2026-11-18/21-50-00",
+                ClipFilesTest.SIDECAR.replace("21:45:49", "21:50:00").replace("21:45:59", "21:50:10"));
+        files.setKept("Garage/2026-11-18/21-45-49", true);
+        indexer.reconcile();
+        indexer.reconcile();
+        assertThat(handed).containsExactly(OffsetDateTime.parse("2026-11-18T21:45:49+01:00"),
+                OffsetDateTime.parse("2026-11-18T21:50:00+01:00"));
+    }
+
+    @Test
+    void pushNotifierFailureDoesNotBreakIndexing() throws Exception {
+        indexer = new ClipIndexer(files, thumbs, repo, clock, (s, indexedAt) -> {
+            throw new IllegalStateException("boom");
+        });
+        ClipFilesTest.clip(root, "Garage/2026-11-18/21-45-49", ClipFilesTest.SIDECAR);
+        ClipFilesTest.clip(root, "Backyard/2026-11-18/21-45-49", ClipFilesTest.SIDECAR);
+        assertThat(indexer.reconcile().added()).isEqualTo(2);
+        assertThat(repo.count()).isEqualTo(2);
     }
 
     @Test

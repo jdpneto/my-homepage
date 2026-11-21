@@ -124,7 +124,8 @@ public class AdminCamerasController {
         String uploader = s.heartbeatAt() == null ? "Uploader: no heartbeat yet"
                 : "Uploader: last heartbeat " + ago(Duration.between(s.heartbeatAt(), now));
         String hub = s.hubOk() == null ? "Hub unknown" : s.hubOk() ? "Hub OK" : "Hub DOWN";
-        return uploader + " · " + hub;
+        String mode = s.hubMode() == null || s.hubMode().isBlank() ? "" : " · mode: " + s.hubMode();
+        return uploader + " · " + hub + mode;
     }
 
     static String ago(Duration d) {

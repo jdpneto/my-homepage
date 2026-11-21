@@ -33,14 +33,27 @@ public class ClipIndexer {
     private final ClipThumbnailer thumbnailer;
     private final CameraClipRepository repo;
     private final Clock clock;
+    private final NewClipListener listener;
     private Instant lastVolumeWarning = Instant.EPOCH;
     private final java.util.Set<String> warned = java.util.concurrent.ConcurrentHashMap.newKeySet();
 
+    /** Told about each clip the moment it is first indexed (never for rows that already exist). */
+    public interface NewClipListener {
+        void clipAdded(ClipSidecar sidecar, Instant indexedAt);
+    }
+
     public ClipIndexer(ClipFiles files, ClipThumbnailer thumbnailer, CameraClipRepository repo, Clock clock) {
+        this(files, thumbnailer, repo, clock, (s, at) -> { });
+    }
+
+    @org.springframework.beans.factory.annotation.Autowired
+    public ClipIndexer(ClipFiles files, ClipThumbnailer thumbnailer, CameraClipRepository repo, Clock clock,
+                       NewClipListener listener) {
         this.files = files;
         this.thumbnailer = thumbnailer;
         this.repo = repo;
         this.clock = clock;
+        this.listener = listener;
     }
 
     @Scheduled(fixedDelayString = "${app.cameras.index-delay-ms:30000}", initialDelayString = "${app.cameras.index-initial-delay-ms:5000}")
@@ -81,6 +94,12 @@ public class ClipIndexer {
                 }
                 repo.save(newRow(stem, sidecar.get(), now));
                 added++;
+                try {
+                    listener.clipAdded(sidecar.get(), now);
+                } catch (RuntimeException e) {
+                    // a push problem must never stop indexing
+                    log.warn("new clip listener failed for {}: {}", stem, e.getClass().getSimpleName());
+                }
             } else {
                 boolean kept = files.isKept(stem);
                 boolean dirty = false;

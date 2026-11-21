@@ -40,6 +40,7 @@ app:
     # background camera jobs off in tests: each test drives them explicitly
     index-initial-delay-ms: 86400000
     alert-initial-delay-ms: 86400000
+    person-push-initial-delay-ms: 86400000
     cleanup-cron: "-"
     root-dir: ./build/test-cameras
     thumbs-dir: ./build/test-camera-thumbs

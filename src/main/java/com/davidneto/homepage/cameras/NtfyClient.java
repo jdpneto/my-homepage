@@ -41,6 +41,12 @@ public class NtfyClient implements Notifier {
 
     @Override
     public boolean send(String title, String message, String priority) {
+        return send(title, message, priority, "high".equals(priority) ? "warning" : "white_check_mark", null);
+    }
+
+    /** {@code tags}: ntfy emoji tags (comma separated); {@code clickUrl}: opened on tap, null for none. */
+    @Override
+    public boolean send(String title, String message, String priority, String tags, String clickUrl) {
         String topic = props.getNtfyTopic();
         if (topic == null || topic.isBlank()) {
             if (!warnedNoTopic) {
@@ -56,7 +62,10 @@ public class NtfyClient implements Notifier {
                     // RFC 2047 so non-ASCII titles survive the header (ntfy decodes it)
                     .header("Title", encodeHeader(title))
                     .header("Priority", priority)
-                    .header("Tags", "high".equals(priority) ? "warning" : "white_check_mark")
+                    .headers(h -> {
+                        if (tags != null && !tags.isBlank()) h.set("Tags", tags);
+                        if (clickUrl != null && !clickUrl.isBlank()) h.set("Click", clickUrl);
+                    })
                     .contentType(new MediaType("text", "plain", StandardCharsets.UTF_8))
                     .body(message)
                     .retrieve()

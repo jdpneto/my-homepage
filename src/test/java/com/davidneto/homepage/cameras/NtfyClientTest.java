@@ -40,6 +40,35 @@ class NtfyClientTest {
     }
 
     @Test
+    void clickAndTagsHeaders() {
+        RestClient.Builder builder = RestClient.builder();
+        MockRestServiceServer server = MockRestServiceServer.bindTo(builder).build();
+        server.expect(requestTo("https://ntfy.sh/topic123"))
+                .andExpect(method(HttpMethod.POST))
+                .andExpect(header("Priority", "high"))
+                .andExpect(header("Tags", "bust_in_silhouette"))
+                .andExpect(header("Click", "https://davidneto.eu/admin/cameras?camera=Living%20Room&trigger=person"))
+                .andExpect(content().string("Away mode"))
+                .andRespond(withSuccess());
+        boolean sent = new NtfyClient(props("topic123"), builder).send("Person · Living Room · 14:58", "Away mode",
+                "high", "bust_in_silhouette", "https://davidneto.eu/admin/cameras?camera=Living%20Room&trigger=person");
+        assertThat(sent).isTrue();
+        server.verify();
+    }
+
+    @Test
+    void plainSendKeepsItsTagsAndHasNoClick() {
+        RestClient.Builder builder = RestClient.builder();
+        MockRestServiceServer server = MockRestServiceServer.bindTo(builder).build();
+        server.expect(requestTo("https://ntfy.sh/topic123"))
+                .andExpect(header("Tags", "warning"))
+                .andExpect(org.springframework.test.web.client.match.MockRestRequestMatchers.headerDoesNotExist("Click"))
+                .andRespond(withSuccess());
+        assertThat(new NtfyClient(props("topic123"), builder).send("t", "m", "high")).isTrue();
+        server.verify();
+    }
+
+    @Test
     void noTopicNoCrash() {
         assertThat(new NtfyClient(props(""), RestClient.builder()).send("t", "m", "high")).isFalse();
     }

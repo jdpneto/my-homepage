@@ -23,6 +23,8 @@ public class CameraProperties {
     private Duration reminderEvery = Duration.ofHours(24);
     /** WebDAV user whose quota is the camera quota. */
     private String webdavUser = "cameras";
+    /** Public base URL of this site, for links in pushes (no trailing slash needed). */
+    private String publicUrl = "https://davidneto.eu";
     /** Path used to measure the VPS root disk. */
     private Path rootDiskPath = Path.of("/");
 
@@ -48,6 +50,8 @@ public class CameraProperties {
     public void setReminderEvery(Duration v) { this.reminderEvery = v; }
     public String getWebdavUser() { return webdavUser; }
     public void setWebdavUser(String v) { this.webdavUser = v; }
+    public String getPublicUrl() { return publicUrl; }
+    public void setPublicUrl(String v) { this.publicUrl = v; }
     public Path getRootDiskPath() { return rootDiskPath; }
     public void setRootDiskPath(Path v) { this.rootDiskPath = v; }
 }

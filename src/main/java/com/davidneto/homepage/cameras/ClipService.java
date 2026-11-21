@@ -183,6 +183,7 @@ public class ClipService {
 
         OffsetDateTime heartbeatAt = null;
         Boolean hubOk = null;
+        String hubMode = null;
         var hb = files.readHeartbeat();
         if (hb.isPresent()) {
             try {
@@ -192,6 +193,7 @@ public class ClipService {
             }
             var hubOkNode = hb.get().get("hub_ok");
             if (hubOkNode != null && hubOkNode.isBoolean()) hubOk = hubOkNode.asBoolean(); // null = unknown, not down
+            hubMode = ClipFiles.textOrNull(hb.get().get("mode")); // absent/null/blank = unknown: not shown
         }
 
         List<String> warnings = new ArrayList<>();
@@ -208,7 +210,7 @@ public class ClipService {
 
         return new StorageStatus(volumeOk, volumeTotal, volumeFree, quotaBytes, quotaUsed,
                 repo.sumSizeByKept(true), repo.sumSizeByKept(false), rootTotal, rootFree,
-                newest, heartbeatAt, hubOk, List.copyOf(warnings));
+                newest, heartbeatAt, hubOk, hubMode, List.copyOf(warnings));
     }
 
     private CameraClip require(long id) {

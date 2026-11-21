@@ -86,12 +86,20 @@ public class ClipFiles {
                     OffsetDateTime.parse(n.path("start").asString()),
                     OffsetDateTime.parse(n.path("end").asString()),
                     n.path("duration_seconds").asInt(),
-                    List.copyOf(triggers)));
+                    List.copyOf(triggers),
+                    textOrNull(n.path("mode"))));
         } catch (Exception e) {
             // Half-uploaded or malformed: skip for now, a later pass will retry.
             log.debug("cannot read sidecar {}: {}", stem, e.toString());
             return Optional.empty();
         }
+    }
+
+    /** A non-blank string value, else null (absent, JSON null, blank or not a string). */
+    static String textOrNull(JsonNode n) {
+        if (n == null || !n.isString()) return null;
+        String v = n.asString().trim();
+        return v.isEmpty() ? null : v;
     }
 
     /** When the clip's .mp4 arrived on this server (its modification time), if it exists. */

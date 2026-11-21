@@ -85,6 +85,16 @@ class ClipFilesTest {
     }
 
     @Test
+    void sidecarModeIsRead() throws Exception {
+        clip(root, "Garage/2026-11-18/21-45-49", SIDECAR.replace("\"triggers\"", "\"mode\": \"away\",\n  \"triggers\""));
+        assertThat(files.readSidecar("Garage/2026-11-18/21-45-49").orElseThrow().mode()).isEqualTo("away");
+        clip(root, "Garage/2026-11-18/21-46-00", SIDECAR); // older uploaders: no mode
+        assertThat(files.readSidecar("Garage/2026-11-18/21-46-00").orElseThrow().mode()).isNull();
+        clip(root, "Garage/2026-11-18/21-47-00", SIDECAR.replace("\"triggers\"", "\"mode\": null,\n  \"triggers\""));
+        assertThat(files.readSidecar("Garage/2026-11-18/21-47-00").orElseThrow().mode()).isNull();
+    }
+
+    @Test
     void readSidecarEmptyWhenMissingOrTruncated() throws Exception {
         clip(root, "Garage/2026-11-18/21-45-49", "{\"camera_name\": \"Gar");
         assertThat(files.readSidecar("Garage/2026-11-18/21-45-49")).isEmpty();
