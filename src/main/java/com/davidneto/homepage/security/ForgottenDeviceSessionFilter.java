@@ -42,7 +42,10 @@ public class ForgottenDeviceSessionFilter extends OncePerRequestFilter {
                 // only a sign-in stored in this session (every real login stores one; a bearer request has none)
                 && session.getAttribute(org.springframework.security.web.context.HttpSessionSecurityContextRepository
                         .SPRING_SECURITY_CONTEXT_KEY) != null
-                && current.getAuthorities().stream().anyMatch(a -> "ROLE_ADMIN".equals(a.getAuthority()))
+                // admin sessions, including the admin password used at /mae (gallery admin: can delete
+                // family photos); family-only gallery sessions are left alone
+                && current.getAuthorities().stream().anyMatch(a -> "ROLE_ADMIN".equals(a.getAuthority())
+                        || "ROLE_GALLERY_ADMIN".equals(a.getAuthority()))
                 && rememberDevice.signedOutByRevokeAll(session)) {
             // "Sign out all devices" ends every other live admin session, password or remembered.
             session.invalidate();

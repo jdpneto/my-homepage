@@ -363,6 +363,23 @@ class RememberDeviceIT {
     }
 
     @Test
+    void revokeAllEndsGalleryAdminSessions() throws Exception {
+        // The admin password typed at /mae gives gallery-admin rights (can delete family photos).
+        MvcResult ga = mvc.perform(post("/mae/login").param("password", "admin").with(csrf())).andReturn();
+        MockHttpSession galleryAdmin = (MockHttpSession) ga.getRequest().getSession(false);
+        assertThat(mvc.perform(get("/mae").session(galleryAdmin)).andReturn().getResponse().getStatus()).isEqualTo(200);
+        MockHttpSession owner = (MockHttpSession) login(false, null).getRequest().getSession(false);
+        assertThat(mvc.perform(post("/api/cameras/auth/revoke-all").session(owner).with(csrf()))
+                .andReturn().getResponse().getStatus()).isEqualTo(200);
+        assertThat(mvc.perform(get("/mae").session(galleryAdmin)).andReturn().getResponse().getRedirectedUrl())
+                .endsWith("/mae/login");
+        // Signing in at /mae again afterwards works.
+        MvcResult again = mvc.perform(post("/mae/login").param("password", "admin").with(csrf())).andReturn();
+        MockHttpSession fresh = (MockHttpSession) again.getRequest().getSession(false);
+        assertThat(mvc.perform(get("/mae").session(fresh)).andReturn().getResponse().getStatus()).isEqualTo(200);
+    }
+
+    @Test
     void revokeAllKeepsTheCallersRememberedSession() throws Exception {
         Cookie c = rememberedDevice();
         MvcResult first = mvc.perform(get("/admin/cameras").cookie(c)).andReturn();

@@ -184,7 +184,8 @@ public class RememberDeviceServices extends AbstractRememberMeServices {
         super.loginSuccess(request, response, auth);
     }
 
-    private void stampSignIn(HttpServletRequest request) {
+    /** Records the sign-in time in the session (also called by the gallery login for its admin sign-ins). */
+    public void stampSignIn(HttpServletRequest request) {
         request.getSession().setAttribute(SIGNED_IN_AT_ATTRIBUTE, System.currentTimeMillis());
     }
 

@@ -44,7 +44,19 @@ public class GallerySecurityConfig {
 
     @Bean
     @Order(1)
-    public SecurityFilterChain galleryFilterChain(HttpSecurity http, LoginRateLimiter limiter) throws Exception {
+    public SecurityFilterChain galleryFilterChain(HttpSecurity http, LoginRateLimiter limiter,
+                                                  com.davidneto.homepage.security.RememberDeviceServices rememberDevice)
+            throws Exception {
+        // Records when a gallery login happened, so "Sign out all devices" can end gallery-admin sessions.
+        RateLimitAuthenticationSuccessHandler success = new RateLimitAuthenticationSuccessHandler(limiter, "/mae") {
+            @Override
+            public void onAuthenticationSuccess(jakarta.servlet.http.HttpServletRequest req,
+                                                jakarta.servlet.http.HttpServletResponse resp, Authentication auth)
+                    throws java.io.IOException, jakarta.servlet.ServletException {
+                rememberDevice.stampSignIn(req);
+                super.onAuthenticationSuccess(req, resp, auth);
+            }
+        };
         http
             .securityMatcher("/mae/**")
             .authorizeHttpRequests(auth -> auth
@@ -59,7 +71,7 @@ public class GallerySecurityConfig {
                 .passwordParameter("password")
                 .defaultSuccessUrl("/mae", true)
                 .failureUrl("/mae/login?error")
-                .successHandler(new RateLimitAuthenticationSuccessHandler(limiter, "/mae"))
+                .successHandler(success)
                 .failureHandler(new RateLimitAuthenticationFailureHandler(limiter))
                 .permitAll()
             )
@@ -73,6 +85,9 @@ public class GallerySecurityConfig {
             )
             .authenticationProvider(galleryAuthenticationProvider())
             .addFilterBefore(new LoginRateLimitFilter(limiter), UsernamePasswordAuthenticationFilter.class)
+            // "Sign out all devices" also ends gallery-admin sessions (the cookie itself is never accepted here)
+            .addFilterBefore(new com.davidneto.homepage.security.ForgottenDeviceSessionFilter(rememberDevice),
+                    org.springframework.security.web.access.intercept.AuthorizationFilter.class)
             .headers(h -> h.addHeaderWriter((req, resp) -> {
                 if (req.getRequestURI().startsWith("/mae")) resp.setHeader("X-Robots-Tag", "noindex, nofollow");
             }));
