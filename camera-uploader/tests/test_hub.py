@@ -90,3 +90,46 @@ async def test_now_asks_hub_when_no_cached_time(config_path):
     hub = ReolinkHub(load_config(config_path))
     hub._host = SimpleNamespace(time=lambda: None, async_get_time=async_get_time)
     assert await hub.now() == datetime(2026, 11, 18, 20, 1, 0)
+
+
+def _hub_with_scene(config_path, get_scene, active="Away"):
+    from camera_uploader.config import load_config
+    from camera_uploader.hub import ReolinkHub
+
+    hub = ReolinkHub(load_config(config_path))
+    hub._host = SimpleNamespace(baichuan=SimpleNamespace(get_scene=get_scene, active_scene=active))
+    return hub
+
+
+async def test_mode_reads_active_scene_lower_case(config_path):
+    async def get_scene():
+        return 3
+
+    assert await _hub_with_scene(config_path, get_scene, "Away").mode() == "away"
+
+
+async def test_mode_failure_returns_none(config_path):
+    async def broken():
+        raise TimeoutError("hub slow")
+
+    assert await _hub_with_scene(config_path, broken).mode() is None
+
+
+async def test_mode_unknown_name_returns_none(config_path):
+    from reolink_aio.const import UNKNOWN
+
+    async def get_scene():
+        return 7
+
+    assert await _hub_with_scene(config_path, get_scene, UNKNOWN).mode() is None
+
+
+def test_mode_is_not_blocked_by_guard():
+    from reolink_aio.baichuan.baichuan import Baichuan
+
+    from camera_uploader.guard import _MARK, install_read_only_guard
+
+    install_read_only_guard()
+    for name in ("get_scene", "get_scene_info"):
+        assert not getattr(getattr(Baichuan, name), _MARK, False), name
+    assert getattr(Baichuan.set_scene, _MARK, False)  # switching stays blocked

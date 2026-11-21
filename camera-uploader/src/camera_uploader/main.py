@@ -104,6 +104,7 @@ async def run_forever(cfg: Config, hub_factory, dav_factory, sleep=asyncio.sleep
                 if result.uploaded or result.failed:
                     log.info("cycle: %d uploaded, %d pending, %d failed, %d already done",
                              result.uploaded, result.pending, result.failed, result.skipped)
+                heartbeat.set_mode(result.mode)
                 consecutive = 0
                 delay = cfg.poll_seconds
                 hub_ok = True

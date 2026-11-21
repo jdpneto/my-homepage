@@ -35,6 +35,7 @@ class CycleResult:
     skipped: int = 0
     pending: int = 0
     failed: int = 0
+    mode: str | None = None
 
 
 class ClipFailed(Exception):
@@ -62,8 +63,9 @@ async def run_cycle(hub, dav, store: StateStore, cfg: Config, now: datetime,
     start, end = compute_window(now, store.get_watermark(), cfg.backfill_days)
     clips = await hub.list_clips(start, end)
     hub_info = await hub.info()
+    mode = await hub.mode()  # never raises; None when unknown
 
-    result = CycleResult()
+    result = CycleResult(mode=mode)
     still_todo: list[datetime] = []
     consecutive_failures = 0
     for clip in sorted(clips, key=lambda c: (c.start, c.channel, c.end)):
@@ -76,7 +78,7 @@ async def run_cycle(hub, dav, store: StateStore, cfg: Config, now: datetime,
             still_todo.append(clip.start)
             continue
         try:
-            await _upload_one(clip, hub, dav, store, cfg, hub_info, remux_fn, tz)
+            await _upload_one(clip, hub, dav, store, cfg, hub_info, remux_fn, tz, mode)
             result.uploaded += 1
             if on_uploaded is not None:
                 on_uploaded(clip)
@@ -100,7 +102,8 @@ async def run_cycle(hub, dav, store: StateStore, cfg: Config, now: datetime,
     return result
 
 
-async def _upload_one(clip, hub, dav, store: StateStore, cfg: Config, hub_info: dict, remux_fn, tz) -> None:
+async def _upload_one(clip, hub, dav, store: StateStore, cfg: Config, hub_info: dict, remux_fn, tz,
+                      mode: str | None = None) -> None:
     cfg.tmp_dir.mkdir(parents=True, exist_ok=True)
     token = uuid.uuid4().hex
     raw = cfg.tmp_dir / f"{token}.raw.mp4"
@@ -124,7 +127,7 @@ async def _upload_one(clip, hub, dav, store: StateStore, cfg: Config, hub_info: 
         while store.stem_taken_by_other(remote_stem(clip, suffix), clip.key):
             suffix += 1
         stem = remote_stem(clip, suffix)
-        sidecar = build_sidecar(clip, hub_info, __version__, tz)
+        sidecar = build_sidecar(clip, hub_info, __version__, tz, mode)
 
         # Auth, quota and network errors propagate: they stop the cycle. Any other
         # WebDAV error (e.g. a 4xx on this clip's path) is this clip's problem.

@@ -21,6 +21,7 @@ log = logging.getLogger(__name__)
 SEARCH_TIMEOUT = 120
 DOWNLOAD_TIMEOUT = 300
 CONNECT_TIMEOUT = 60
+MODE_TIMEOUT = 15
 
 
 class HubError(Exception):
@@ -56,6 +57,7 @@ class ReolinkHub:
     def __init__(self, cfg: Config):
         self._cfg = cfg
         self._host: Host | None = None
+        self._mode_error: str | None = None
 
     async def connect(self) -> None:
         install_read_only_guard()
@@ -68,6 +70,35 @@ class ReolinkHub:
         self._host = host
         log.info("connected to hub %s (%s, firmware %s), channels %s",
                  self._cfg.hub_host, host.model, host.sw_version, host.channels)
+        await self._load_mode_names(host)
+
+    async def _load_mode_names(self, host) -> None:
+        """Names of the hub's modes (scenes), read once per connection; best effort, read-only."""
+        bc = getattr(host, "baichuan", None)
+        for scene_id in sorted(getattr(bc, "_scenes", {}) or {}):
+            if scene_id < 0:
+                continue
+            try:
+                await asyncio.wait_for(bc.get_scene_info(scene_id), MODE_TIMEOUT)
+            except Exception as exc:  # names are only for display; never fail the connection
+                log.warning("could not read the name of hub mode %s: %s", scene_id, exc)
+
+    async def mode(self) -> str | None:
+        """The hub's active mode in lower case ("away", "home", "disarm", "off"), or None if unknown.
+        Read-only (Baichuan cmd 601) and never raises: a failure must not affect uploads."""
+        try:
+            bc = self._require().baichuan
+            await asyncio.wait_for(bc.get_scene(), MODE_TIMEOUT)
+            name = bc.active_scene
+        except Exception as exc:
+            if self._mode_error != str(exc):
+                log.warning("could not read the hub's mode: %s", exc)
+            self._mode_error = str(exc)
+            return None
+        self._mode_error = None
+        if not isinstance(name, str) or not name or name == UNKNOWN:
+            return None
+        return name.lower()
 
     async def now(self) -> datetime:
         """The hub's own local wall-clock time (naive), the clock its clip timestamps use."""

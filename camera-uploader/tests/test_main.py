@@ -36,6 +36,9 @@ class FakeHub:
     async def info(self):
         return {"model": "m", "firmware": "f"}
 
+    async def mode(self):
+        return "away"
+
     async def now(self):
         return NOW
 
@@ -282,6 +285,7 @@ async def test_run_forever_heartbeat_ok_after_good_cycle(cfg):
         await run_forever(cfg, lambda c: FakeHub(), lambda c: dav, sleep=sleep, clock=lambda: NOW)
     beats = [body for path, body in dav.puts if path == "heartbeat.json"]
     assert beats and beats[0]["hub_ok"] is True and beats[0]["last_error"] is None
+    assert beats[-1]["mode"] == "away"
 
 
 async def test_no_heartbeat_after_webdav_auth_error(cfg):

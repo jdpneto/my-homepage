@@ -1,4 +1,5 @@
 import json
+import json
 import shutil
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -26,9 +27,13 @@ def clip(minutes_ago, length=30, name="Backyard", cid="uid1", ch=1, second=0):
 
 
 class FakeHub:
-    def __init__(self, clips, payload=b"video-bytes", fail_download=None):
+    def __init__(self, clips, payload=b"video-bytes", fail_download=None, mode=None):
         self.clips, self.payload, self.fail_download = clips, payload, fail_download or set()
         self.downloads, self.windows = [], []
+        self._mode = mode
+
+    async def mode(self):
+        return self._mode
 
     async def list_clips(self, start, end):
         self.windows.append((start, end))
@@ -273,3 +278,21 @@ async def test_on_uploaded_called_per_clip(cfg, store):
     await run_cycle(FakeHub([clip(10, name="Garage", cid="u0", ch=0), clip(5)]), FakeDav(), store, cfg, NOW,
                     remux_fn=copy_remux, tz=TZ, on_uploaded=seen.append)
     assert len(seen) == 2
+
+
+async def test_clips_stamped_with_mode(cfg, store):
+    c = clip(5)
+    dav = FakeDav()
+    result = await run(FakeHub([c], mode="away"), dav, store, cfg)
+    stem = f"Backyard/{c.start:%Y-%m-%d}/{c.start:%H-%M-%S}"
+    assert json.loads(dav.files[f"{stem}.json"])["mode"] == "away"
+    assert result.mode == "away"
+
+
+async def test_mode_failure_does_not_fail_the_cycle(cfg, store):
+    c = clip(5)
+    dav = FakeDav()
+    result = await run(FakeHub([c], mode=None), dav, store, cfg)
+    stem = f"Backyard/{c.start:%Y-%m-%d}/{c.start:%H-%M-%S}"
+    assert json.loads(dav.files[f"{stem}.json"])["mode"] is None
+    assert result.uploaded == 1 and result.mode is None

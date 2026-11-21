@@ -118,3 +118,16 @@ async def test_suppressed_heartbeat_sends_nothing():
     assert dav.puts == []
     hb.suppress(False)
     assert await hb.maybe_send(dav, T0) is True
+
+
+async def test_payload_has_mode_and_change_sends_early():
+    hb, dav = Heartbeat(300), Dav()
+    hb.record(True, None, 4, T0)
+    assert hb.payload(T0)["mode"] is None
+    hb.set_mode("home")
+    await hb.maybe_send(dav, T0)
+    assert dav.puts[-1][1]["mode"] == "home"
+    assert await hb.maybe_send(dav, T0 + timedelta(seconds=10)) is False  # unchanged: rate-limited
+    hb.set_mode("away")
+    assert await hb.maybe_send(dav, T0 + timedelta(seconds=20)) is True  # changed: sent at once
+    assert dav.puts[-1][1]["mode"] == "away"

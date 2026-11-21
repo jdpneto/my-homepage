@@ -25,6 +25,12 @@ class Heartbeat:
         self._last_ok: datetime | None = None
         self._skew: float | None = None
         self._suppressed = False
+        self._mode: str | None = None
+        self._sent_mode: str | None = None
+
+    def set_mode(self, mode: str | None) -> None:
+        """The hub's active mode after a cycle (None = unknown). A change is sent at once."""
+        self._mode = mode
 
     def suppress(self, on: bool) -> None:
         """While on, nothing is sent (e.g. after a WebDAV 401: a PUT would add a failed login)."""
@@ -66,6 +72,7 @@ class Heartbeat:
             "last_error": self._last_error,
             "last_ok": self._last_ok.isoformat(timespec="seconds") if self._last_ok else None,
             "hub_clock_skew_seconds": round(self._skew) if self._skew is not None else None,
+            "mode": self._mode,
         }
 
     async def maybe_send(self, dav, now: datetime) -> bool:
@@ -73,7 +80,8 @@ class Heartbeat:
             return False
         due = (self._last_sent is None
                or (now - self._last_sent).total_seconds() >= self._interval
-               or self._hub_ok != self._sent_hub_ok)
+               or self._hub_ok != self._sent_hub_ok
+               or self._mode != self._sent_mode)
         if not due:
             return False
         try:
@@ -81,5 +89,5 @@ class Heartbeat:
         except Exception as exc:  # a heartbeat problem must never stop uploads
             log.warning("heartbeat not sent: %s: %s", type(exc).__name__, exc)
             return False
-        self._last_sent, self._sent_hub_ok = now, self._hub_ok
+        self._last_sent, self._sent_hub_ok, self._sent_mode = now, self._hub_ok, self._mode
         return True

@@ -13,7 +13,8 @@ def _iso(naive_local: datetime, tz: tzinfo | None) -> str:
     return aware.isoformat(timespec="seconds")
 
 
-def build_sidecar(clip: Clip, hub_info: dict, uploader_version: str, tz: tzinfo | None) -> dict:
+def build_sidecar(clip: Clip, hub_info: dict, uploader_version: str, tz: tzinfo | None,
+                  mode: str | None = None) -> dict:
     return {
         "camera_name": clip.camera_name,
         "camera_id": clip.camera_id,
@@ -25,4 +26,5 @@ def build_sidecar(clip: Clip, hub_info: dict, uploader_version: str, tz: tzinfo 
         "hub_model": hub_info.get("model"),
         "hub_firmware": hub_info.get("firmware"),
         "uploader_version": uploader_version,
+        "mode": mode,  # the hub's active mode when the clip was uploaded ("away", "home", ...) or None
     }

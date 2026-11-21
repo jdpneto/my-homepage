@@ -27,6 +27,7 @@ def test_sidecar_fields_winter():
         "hub_model": "Reolink Home Hub Mini",
         "hub_firmware": "v3.3.0.609_26092101",
         "uploader_version": "0.1.0",
+        "mode": None,
     }
     json.dumps(s)  # serialisable
 
@@ -41,3 +42,9 @@ def test_sidecar_default_tz_is_local_with_offset():
     s = build_sidecar(clip(datetime(2026, 11, 16, 19, 22, 58), datetime(2026, 11, 16, 19, 23, 28)),
                       HUB, "0.1.0", None)
     assert re.fullmatch(r"2026-11-16T19:22:58[+-]\d\d:\d\d", s["start"])
+
+
+def test_sidecar_has_mode():
+    s = build_sidecar(clip(datetime(2026, 11, 16, 19, 22, 58), datetime(2026, 11, 16, 19, 23, 28)),
+                      HUB, "0.1.0", ZoneInfo("Europe/Lisbon"), mode="away")
+    assert s["mode"] == "away"
