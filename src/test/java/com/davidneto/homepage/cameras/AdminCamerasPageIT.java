@@ -226,6 +226,46 @@ class AdminCamerasPageIT {
     }
 
     @Test
+    void manifestLinkedAndPublic() throws Exception {
+        // Manifest: public (no login), opens the camera page full-screen.
+        var manifest = mvc.perform(get("/cameras.webmanifest")).andExpect(status().isOk()).andReturn().getResponse();
+        assertThat(manifest.getContentType()).contains("manifest+json");
+        var m = tools.jackson.databind.json.JsonMapper.builder().build().readTree(manifest.getContentAsString());
+        assertThat(m.get("name").asString()).isEqualTo("Cameras");
+        assertThat(m.get("short_name").asString()).isEqualTo("Cameras");
+        assertThat(m.get("start_url").asString()).isEqualTo("/admin/cameras");
+        assertThat(m.get("scope").asString()).isEqualTo("/");
+        assertThat(m.get("display").asString()).isEqualTo("standalone");
+        assertThat(m.get("background_color").asString()).isEqualTo("#0a0a0a");
+        assertThat(m.get("theme_color").asString()).isEqualTo("#0a0a0a");
+        List<String> iconSrcs = new java.util.ArrayList<>();
+        m.get("icons").forEach(i -> iconSrcs.add(i.get("src").asString() + " " + i.get("sizes").asString()));
+        assertThat(iconSrcs).contains("/icons/cameras-192.png 192x192", "/icons/cameras-512.png 512x512");
+
+        // Icons: public PNGs of the right pixel size.
+        for (var icon : java.util.Map.of("/icons/cameras-192.png", 192, "/icons/cameras-512.png", 512,
+                "/icons/apple-touch-icon.png", 180).entrySet()) {
+            var r = mvc.perform(get(icon.getKey())).andExpect(status().isOk()).andReturn().getResponse();
+            assertThat(r.getContentType()).as(icon.getKey()).isEqualTo("image/png");
+            var img = javax.imageio.ImageIO.read(new java.io.ByteArrayInputStream(r.getContentAsByteArray()));
+            assertThat(img).as(icon.getKey()).isNotNull();
+            assertThat(img.getWidth()).as(icon.getKey()).isEqualTo(icon.getValue());
+            assertThat(img.getHeight()).as(icon.getKey()).isEqualTo(icon.getValue());
+        }
+
+        // Linked from the camera page and the login page (the home-screen shortcut may land on either).
+        String login = mvc.perform(get("/admin/login")).andExpect(status().isOk())
+                .andReturn().getResponse().getContentAsString();
+        for (String html : List.of(page("/admin/cameras"), login)) {
+            assertThat(html).contains("rel=\"manifest\" href=\"/cameras.webmanifest\"")
+                    .contains("rel=\"apple-touch-icon\" href=\"/icons/apple-touch-icon.png\"")
+                    .contains("name=\"apple-mobile-web-app-capable\" content=\"yes\"")
+                    .contains("name=\"mobile-web-app-capable\" content=\"yes\"")
+                    .contains("name=\"theme-color\" content=\"#0a0a0a\"");
+        }
+    }
+
+    @Test
     void revokeButtonSignsOutAllDevicesIncludingRemembered() throws Exception {
         assertThat(page("/admin/cameras")).contains(">Sign out all devices</button>")
                 .doesNotContain("Sign out all app devices");

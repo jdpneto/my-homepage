@@ -1,0 +1,14 @@
+{
+  "name": "Cameras",
+  "short_name": "Cameras",
+  "description": "Camera clips and alerts",
+  "start_url": "/admin/cameras",
+  "scope": "/",
+  "display": "standalone",
+  "background_color": "#0a0a0a",
+  "theme_color": "#0a0a0a",
+  "icons": [
+    { "src": "/icons/cameras-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+    { "src": "/icons/cameras-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" }
+  ]
+}
