@@ -19,3 +19,13 @@ class Clip:
     def key(self) -> str:
         """Stable identity across restarts, camera renames and trigger reclassification."""
         return f"{self.camera_id}|{self.start:%Y%m%dT%H%M%S}|{self.end:%Y%m%dT%H%M%S}"
+
+
+@dataclass(frozen=True)
+class Camera:
+    """A hub slot the uploader has seen with a camera UID at least once."""
+
+    channel: int
+    name: str
+    uid: str
+    online: bool | None = None  # what the latest GetChannelstatus said; None = no status (never stored)

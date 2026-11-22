@@ -103,7 +103,7 @@ async def run_forever(cfg: Config, hub_factory, dav_factory, sleep=asyncio.sleep
     log.info("camera-uploader %s starting: %r", __version__, cfg)
     try:
         while True:
-            hub_ok, error = None, None
+            hub_ok, error, cameras = None, None, None
             try:
                 if hub is None:
                     hub = hub_factory(cfg)
@@ -116,6 +116,9 @@ async def run_forever(cfg: Config, hub_factory, dav_factory, sleep=asyncio.sleep
                     log.info("cycle: %d uploaded, %d pending, %d failed, %d already done",
                              result.uploaded, result.pending, result.failed, result.skipped)
                 heartbeat.set_mode(result.mode)
+                heartbeat.set_cameras_offline(result.cameras_offline)
+                heartbeat.set_cameras_search_failing(result.cameras_search_failing)
+                cameras = result.cameras
                 consecutive = 0
                 delay = cfg.poll_seconds
                 hub_ok = True
@@ -139,7 +142,7 @@ async def run_forever(cfg: Config, hub_factory, dav_factory, sleep=asyncio.sleep
             now = clock().astimezone()
             # From the state DB, not the cycle result: also reported when the cycle failed after handling it.
             heartbeat.set_mode_request_result(store.get_mode_request_result())
-            heartbeat.record(hub_ok, error, getattr(hub, "camera_count", None), now)
+            heartbeat.record(hub_ok, error, cameras, now)  # None (a failed cycle) keeps the last count
             heartbeat.suppress((error or "").startswith("AuthError"))  # a PUT would only add a failed login
             await heartbeat.maybe_send(dav, now)
             await sleep(delay)

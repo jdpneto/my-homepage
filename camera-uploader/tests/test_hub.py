@@ -236,3 +236,155 @@ async def test_switch_mode_rechecks_expiry_before_the_write(config_path):
     bc.send.assert_not_awaited()
     await hub.switch_mode("away", not_after=datetime.now(timezone.utc) + timedelta(minutes=1))
     bc.send.assert_awaited_once()
+
+
+# --- every known camera, online or not (22 Nov 2026 incident) ----------------------
+from fake_reolink import BACKYARD, FRONT, GARAGE, LIVING, PROBE_STATUS, FakeHost, slot
+from reolink_aio.const import UNKNOWN
+from reolink_aio.exceptions import ReolinkTimeoutError
+
+from camera_uploader.model import Camera
+
+STATUS_CMD = [{"cmd": "GetChannelstatus", "action": 0, "param": {}}]
+
+
+def _hub_on(config_path, host):
+    from camera_uploader.config import load_config
+
+    hub = ReolinkHub(load_config(config_path))
+    hub._host = host
+    return hub
+
+
+async def test_refresh_slots_learns_uid_and_name_from_channel_status(config_path):
+    host = FakeHost()
+    known = await _hub_on(config_path, host).refresh_cameras({})
+    assert known == {
+        0: Camera(0, "Garage", GARAGE, online=True),
+        2: Camera(2, "Living Room", LIVING, online=True),
+        3: Camera(3, "Front door", FRONT, online=True),
+    }  # slot 1 (no uid yet) and the empty slots 4-7 are not cameras
+    assert host.sent == [(STATUS_CMD, "json")]  # one read-only Get* command, let through by the guard
+
+
+async def test_offline_slot_keeps_remembered_uid_and_name(config_path):
+    remembered = {0: Camera(0, "Garage", GARAGE), 1: Camera(1, "Backyard", BACKYARD)}
+    status = [slot(0, 1, "Garage door", GARAGE), slot(1, 0, "", ""), slot(2, 0, "Living Room", LIVING)]
+    known = await _hub_on(config_path, FakeHost(channels=[0], status=status)).refresh_cameras(remembered)
+    assert known == {
+        0: Camera(0, "Garage door", GARAGE, online=True),  # a rename is picked up
+        1: Camera(1, "Backyard", BACKYARD, online=False),  # offline, empty name/uid: remembered values kept
+        2: Camera(2, "Living Room", LIVING, online=False),  # offline but reporting its uid: learned
+    }
+    assert remembered[1] == Camera(1, "Backyard", BACKYARD)  # the caller's mapping is not changed
+
+
+async def test_refresh_failure_keeps_known_cameras(config_path):
+    remembered = {0: Camera(0, "Garage", GARAGE), 1: Camera(1, "Backyard", BACKYARD)}
+    # (Login learned only the Garage, already remembered: see test_refresh_seeds_cameras_from_login_data.)
+    for host in (FakeHost(channels=[0], send_error=ReolinkTimeoutError("hub slow")),
+                 FakeHost(channels=[0], send_error=ReolinkConnectionError("socket closed"))):
+        assert await _hub_on(config_path, host).refresh_cameras(remembered) == remembered
+    # A refused or malformed answer is no better.
+    for answer in ([{"cmd": "GetChannelstatus", "code": 1, "error": {"rspCode": -9}}], [], None, [{"value": 3}]):
+        host = FakeHost(channels=[0])
+
+        async def send(body, param=None, expected_response_type="json", retry=3, _a=answer):
+            return _a
+
+        host.send = send
+        assert await _hub_on(config_path, host).refresh_cameras(remembered) == remembered
+    # Not connected: nothing to ask, the remembered list stands.
+    assert await ReolinkHub(_hub_on(config_path, FakeHost())._cfg).refresh_cameras(remembered) == remembered
+
+
+async def test_search_sets_uid_for_offline_slot(config_path):
+    start, end = datetime(2026, 11, 22, 0, 0), datetime(2026, 11, 22, 12, 0)
+    rec = (datetime(2026, 11, 22, 3, 0, 0), datetime(2026, 11, 22, 3, 0, 30))
+    host = FakeHost(channels=[0], recordings={1: [rec]})  # login saw only slot 0
+    hub = _hub_on(config_path, host)
+    backyard = Camera(1, "Backyard", BACKYARD, online=False)
+    clips = await hub.list_clips(backyard, start, end)
+    assert host.baichuan.searches == [(1, BACKYARD, "Backyard")]  # the library knew the uid when asked
+    assert [(c.channel, c.camera_name, c.camera_id, c.start, c.end) for c in clips] == [
+        (1, "Backyard", BACKYARD, *rec)]
+    # Downloads need the uid too, also on a fresh session that never searched that slot.
+    host2 = FakeHost(channels=[0])
+    hub2 = _hub_on(config_path, host2)
+    dest = config_path.parent / "clip.mp4"
+    assert await hub2.download(clips[0], dest) == dest.stat().st_size > 0
+    assert host2.baichuan.downloads == [(1, BACKYARD, rec[0])]
+    # The same uid in the library's own form (a "_" suffix) is left alone.
+    host3 = FakeHost(channels=[0, 1], uids={0: GARAGE, 1: BACKYARD + "_1"}, names={0: "Garage", 1: "Backyard"})
+    await _hub_on(config_path, host3).list_clips(backyard, start, end)
+    assert host3.baichuan.searches == [(1, BACKYARD + "_1", "Backyard")]
+    # A failed search is a HubError naming the channel.
+    host4 = FakeHost(channels=[0])
+    with pytest.raises(HubError, match="channel 1"):
+        await _hub_on(config_path, host4).list_clips(Camera(1, "Backyard", ""), start, end)
+
+
+async def test_search_replaces_a_stale_library_uid(config_path):
+    # Login saw an older camera in slot 1; a different one was paired there since (the refresh knows).
+    start, end = datetime(2026, 11, 22, 0, 0), datetime(2026, 11, 22, 12, 0)
+    rec = (datetime(2026, 11, 22, 3, 0, 0), datetime(2026, 11, 22, 3, 0, 30))
+    host = FakeHost(channels=[0, 1], uids={0: GARAGE, 1: "OLDCAMUID"}, names={0: "Garage", 1: "Old cam"},
+                    recordings={1: [rec]})
+    hub = _hub_on(config_path, host)
+    clips = await hub.list_clips(Camera(1, "Backyard", BACKYARD), start, end)
+    assert host.baichuan.searches == [(1, BACKYARD, "Backyard")]
+    await hub.download(clips[0], config_path.parent / "clip.mp4")
+    assert host.baichuan.downloads == [(1, BACKYARD, rec[0])]
+
+
+async def test_refresh_seeds_cameras_from_login_data(config_path):
+    # At login reolink-aio learned slots 0, 2 and 3; now Living Room is asleep and reports no uid.
+    status = [slot(0, 1, "Garage", GARAGE), slot(1), slot(2, 0, "", ""), slot(3, 1, "Front door", FRONT)]
+    known = await _hub_on(config_path, FakeHost(status=status, uids={0: GARAGE, 2: LIVING, 3: FRONT},
+                                                names={0: "Garage", 2: "Living Room", 3: "Front door"})
+                          ).refresh_cameras({})
+    assert known == {
+        0: Camera(0, "Garage", GARAGE, online=True),
+        2: Camera(2, "Living Room", LIVING, online=False),
+        3: Camera(3, "Front door", FRONT, online=True),
+    }
+    # The refresh failing on a first run: what login learned is still searched.
+    host = FakeHost(channels=[0], send_error=ReolinkTimeoutError("hub slow"))
+    assert await _hub_on(config_path, host).refresh_cameras({}) == {0: Camera(0, "Garage", GARAGE)}
+    # Remembered values win over login's; slots login knows nothing about are not cameras.
+    host = FakeHost(channels=[0, 5], uids={0: GARAGE, 5: UNKNOWN}, names={0: "Garage", 5: UNKNOWN},
+                    send_error=ReolinkTimeoutError("hub slow"))
+    remembered = {0: Camera(0, "Garage door", GARAGE)}
+    assert await _hub_on(config_path, host).refresh_cameras(remembered) == remembered
+
+
+async def test_search_failure_kinds(config_path):
+    from reolink_aio.exceptions import ApiError, InvalidParameterError
+
+    from camera_uploader.hub import CameraSearchError
+
+    start, end = datetime(2026, 11, 22, 0, 0), datetime(2026, 11, 22, 12, 0)
+    garage = Camera(0, "Garage", GARAGE)
+    # The hub answered, about this camera: the other cameras can still be searched.
+    for err in (InvalidParameterError("cannot get UID for channel 0"), ApiError("rspCode -12")):
+        with pytest.raises(CameraSearchError, match="channel 0"):
+            await _hub_on(config_path, FakeHost(search_error=err)).list_clips(garage, start, end)
+    # The link itself failed: no point asking about the other cameras on this session.
+    for err in (ReolinkTimeoutError("no answer"), ReolinkConnectionError("socket closed"), TimeoutError(),
+                OSError("host down")):
+        with pytest.raises(HubError) as info:
+            await _hub_on(config_path, FakeHost(search_error=err)).list_clips(garage, start, end)
+        assert not isinstance(info.value, CameraSearchError), err
+
+
+async def test_truncated_search_is_an_error_not_a_partial_result(config_path):
+    from camera_uploader.hub import CameraSearchError, SearchTruncated
+
+    start, end = datetime(2026, 11, 22, 0, 0), datetime(2026, 11, 22, 12, 0)
+    recs = [(datetime(2026, 11, 22, 3, m), datetime(2026, 11, 22, 3, m, 30)) for m in range(3)]
+    host = FakeHost(recordings={0: recs, 2: recs}, truncate={0})
+    hub = _hub_on(config_path, host)
+    with pytest.raises(SearchTruncated, match="channel 0") as info:
+        await hub.list_clips(Camera(0, "Garage", GARAGE), start, end)
+    assert isinstance(info.value, CameraSearchError)
+    assert len(await hub.list_clips(Camera(2, "Living Room", LIVING), start, end)) == 3  # no false alarm after

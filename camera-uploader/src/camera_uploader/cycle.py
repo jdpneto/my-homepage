@@ -6,14 +6,15 @@ import json
 import logging
 import time
 import uuid
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime, timedelta, tzinfo
 from typing import Awaitable, Callable
 
 from . import __version__
 from .config import Config
-from .hub import HubError, ModeSwitchError
+from .hub import CameraSearchError, HubError, ModeSwitchError, SearchTruncated
 from .mode_request import PATH as MODE_REQUEST, SWITCHABLE, parse_request
+from .model import Camera
 from .naming import remote_stem
 from .remux import RemuxError, RemuxUnavailable, remux
 from .sidecar import build_sidecar
@@ -39,6 +40,9 @@ class CycleResult:
     failed: int = 0
     mode: str | None = None
     mode_request: dict | None = None  # the heartbeat's `mode_request` when a request was handled this cycle
+    cameras: int | None = field(default=None, compare=False)  # known cameras (the heartbeat's `cameras`)
+    cameras_offline: list[str] | None = field(default=None, compare=False)  # None: no status this cycle
+    cameras_search_failing: list[str] = field(default_factory=list, compare=False)  # names, this cycle
 
 
 class ClipFailed(Exception):
@@ -53,6 +57,9 @@ class CycleAborted(HubError):
 
 
 MAX_CONSECUTIVE_FAILURES = 2
+SEARCH_SLICE = timedelta(hours=6)  # longer spans are searched in slices (reolink-aio stops after 50 pages)
+MIN_SLICE = timedelta(minutes=15)  # a truncated slice is halved down to this
+BEHIND = timedelta(days=1)  # a camera whose search fails this far behind is logged as an error
 MODE_REQUEST_MAX_AGE = timedelta(minutes=5)
 
 _last_bad_request: str | None = None
@@ -159,46 +166,168 @@ async def run_cycle(hub, dav, store: StateStore, cfg: Config, now: datetime,
             log.warning("mode request result not reported yet: %s: %s", type(exc).__name__, exc)
 
     settle = timedelta(seconds=cfg.settle_seconds)
-    start, end = compute_window(now, store.get_watermark(), cfg.backfill_days)
-    clips = await hub.list_clips(start, end)
+    cameras = await _known_cameras(hub, store)
+    search = await _search_cameras(hub, store, cfg, now, cameras)
     hub_info = await hub.info()
     mode = await hub.mode()  # never raises; None when unknown
 
-    result = CycleResult(mode=mode, mode_request=mode_request)
-    still_todo: list[datetime] = []
-    consecutive_failures = 0
-    for clip in sorted(clips, key=lambda c: (c.start, c.channel, c.end)):
+    result = CycleResult(mode=mode, mode_request=mode_request, cameras=len(cameras),
+                         cameras_offline=_offline_names(cameras), cameras_search_failing=search.failing)
+    still_todo: dict[int, list[datetime]] = {ch: [] for ch in search.searched}
+    # Failures in a row with no success between, by camera: two from different cameras say the hub
+    # is the problem (back off and reconnect); two from one camera say it's that camera's (e.g. an
+    # offline battery camera), so only its other clips wait for the next cycle.
+    in_a_row: list[int] = []
+    benched: set[int] = set()
+    for clip in sorted(search.clips, key=lambda c: (c.start, c.channel, c.end)):
         status = store.status(clip.key)
         if status != "new":
             result.skipped += 1
             continue
-        if clip.end > now - settle:
+        if clip.end > now - settle or clip.channel in benched:
             result.pending += 1
-            still_todo.append(clip.start)
+            still_todo[clip.channel].append(clip.start)
             continue
         try:
             await _upload_one(clip, hub, dav, store, cfg, hub_info, remux_fn, tz, mode)
             result.uploaded += 1
             if on_uploaded is not None:
                 on_uploaded(clip)
-            consecutive_failures = 0
+            in_a_row = []
         except ClipFailed as exc:
             result.failed += 1
-            consecutive_failures += 1
+            in_a_row.append(clip.channel)
             gave_up = store.record_failure(clip.key, str(exc), cfg.max_attempts,
                                            timedelta(hours=cfg.give_up_hours), now)
-            if consecutive_failures >= MAX_CONSECUTIVE_FAILURES:
-                raise CycleAborted(f"{consecutive_failures} clips in a row failed (last: {exc}) - "
+            if len(in_a_row) >= MAX_CONSECUTIVE_FAILURES and len(set(in_a_row)) > 1:
+                raise CycleAborted(f"{len(in_a_row)} clips in a row failed (last: {exc}) - "
                                    "backing off and reconnecting") from exc
             if gave_up:
                 log.error("giving up on %s %s after %d attempts: %s",
                           clip.camera_name, clip.start, cfg.max_attempts, exc)
             else:
                 log.warning("clip %s %s failed, will retry: %s", clip.camera_name, clip.start, exc)
-                still_todo.append(clip.start)
+                still_todo[clip.channel].append(clip.start)
+            if in_a_row[-MAX_CONSECUTIVE_FAILURES:] == [clip.channel] * MAX_CONSECUTIVE_FAILURES:
+                benched.add(clip.channel)
+                log.warning("%s: %d downloads in a row failed - its other clips wait for the next cycle",
+                            clip.camera_name, MAX_CONSECUTIVE_FAILURES)
 
-    store.set_watermark(next_watermark(now, still_todo, settle))
+    # Per camera: a camera whose search failed keeps its watermark and is searched from there next
+    # time; one whose search failed part way is searched again from the slice that failed.
+    for ch, starts in still_todo.items():
+        mark = next_watermark(now, starts, settle)
+        if ch in search.held:
+            mark = min(mark, search.held[ch])
+        store.set_camera_watermark(ch, mark)
+    if search.link_error is not None:
+        raise search.link_error  # after uploading what was found: then back off and reconnect
     return result
+
+
+async def _known_cameras(hub, store: StateStore) -> dict[int, Camera]:
+    """The remembered cameras, refreshed from the hub's slot list (a failed refresh keeps them)."""
+    remembered = store.get_known_cameras()
+    known = await hub.refresh_cameras(remembered)
+    if {ch: (c.name, c.uid) for ch, c in known.items()} != {ch: (c.name, c.uid) for ch, c in remembered.items()}:
+        store.set_known_cameras(known)
+    return known
+
+
+def _offline_names(cameras: dict[int, Camera]) -> list[str] | None:
+    """Names of the cameras the hub's latest status said are offline; None without any status."""
+    if all(c.online is None for c in cameras.values()):
+        return None
+    return sorted(c.name for c in cameras.values() if c.online is False)
+
+
+@dataclass
+class _Search:
+    clips: list = field(default_factory=list)
+    searched: set[int] = field(default_factory=set)  # channels searched (at least the first slice)
+    held: dict[int, datetime] = field(default_factory=dict)  # channel -> start of the slice that failed
+    failing: list[str] = field(default_factory=list)  # names of the cameras whose search failed
+    link_error: HubError | None = None  # the link failed: the remaining cameras were not searched
+
+
+def _search_order(cameras: dict[int, Camera], marks: dict[int, datetime | None]) -> list[Camera]:
+    """Most caught-up first: a camera stuck failing, or on its (long) first search, goes last."""
+    def key(cam: Camera):
+        mark = marks[cam.channel]
+        return (mark is None, -(mark - datetime.min).total_seconds() if mark is not None else 0, cam.channel)
+    return sorted(cameras.values(), key=key)
+
+
+async def _search_span(hub, camera: Camera, start: datetime, end: datetime) -> list:
+    """One slice; when reolink-aio cut it short (50 pages), its halves instead."""
+    try:
+        return await hub.list_clips(camera, start, end)
+    except SearchTruncated:
+        if end - start <= MIN_SLICE:
+            raise
+        mid = start + (end - start) / 2
+        return [*await _search_span(hub, camera, start, mid), *await _search_span(hub, camera, mid, end)]
+
+
+async def _search_camera(hub, camera: Camera, start: datetime, end: datetime) -> tuple[list, datetime | None, Exception | None]:
+    """(clips, start of the slice that failed or None, its error). Slices of at most SEARCH_SLICE,
+    oldest first, stopping at the first failure. A link failure (plain HubError) propagates."""
+    found: dict[str, object] = {}
+    slice_start = start
+    while slice_start < end:
+        slice_end = min(slice_start + SEARCH_SLICE, end)
+        try:
+            for clip in await _search_span(hub, camera, slice_start, slice_end):
+                found[clip.key] = clip  # a clip starting on a slice boundary is listed twice
+        except CameraSearchError as exc:
+            return list(found.values()), slice_start, exc
+        slice_start = slice_end
+    return list(found.values()), None, None
+
+
+async def _search_cameras(hub, store: StateStore, cfg: Config, now: datetime,
+                          cameras: dict[int, Camera]) -> _Search:
+    """Search every known camera, online or not, each from its own watermark (a camera's first
+    search reaches back to the backfill limit: 0.3.0 had one global watermark, which ran past
+    cameras missing from reolink-aio's login list; clips already on the VPS are skipped).
+
+    One camera failing is logged and skipped (its watermark stays). A link failure stops the
+    searching (what was found is still uploaded, then the error is raised). Only when every
+    camera's search failed is it the hub's problem at once (the last HubError is raised).
+    """
+    marks = {ch: store.get_camera_watermark(ch) for ch in cameras}
+    search, last_error = _Search(), None
+    for camera in _search_order(cameras, marks):
+        ch, mark = camera.channel, marks[camera.channel]
+        if mark is None:
+            log.info("first search of %s (channel %s), back to the backfill limit", camera.name, ch)
+        start, end = compute_window(now, mark, cfg.backfill_days)
+        try:
+            clips, failed_at, error = await _search_camera(hub, camera, start, end)
+        except HubError as exc:
+            last_error = exc
+            search.link_error = exc
+            search.failing.append(camera.name)
+            log.warning("searching %s (channel %s) failed on the hub link - not searching the other "
+                        "cameras this cycle: %s", camera.name, ch, exc)
+            break
+        search.clips.extend(clips)
+        if error is not None:
+            last_error = error
+            search.failing.append(camera.name)
+            behind = mark is not None and now - mark > BEHIND
+            log.log(logging.ERROR if behind else logging.WARNING,
+                    "could not search %s (channel %s) from %s, will retry next cycle%s: %s", camera.name, ch,
+                    failed_at, f" (caught up only to {mark}; clips older than {cfg.backfill_days} days are "
+                               "no longer searched)" if behind else "", error)
+            if failed_at == start:
+                continue  # nothing of it searched: its watermark stays
+            search.held[ch] = failed_at
+        search.searched.add(ch)
+    search.failing.sort()
+    if cameras and not search.searched:
+        raise last_error
+    return search
 
 
 async def _upload_one(clip, hub, dav, store: StateStore, cfg: Config, hub_info: dict, remux_fn, tz,

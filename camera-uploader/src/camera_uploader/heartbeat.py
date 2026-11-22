@@ -20,6 +20,8 @@ class Heartbeat:
         self._hub_error_since: datetime | None = None
         self._last_error: str | None = None
         self._cameras: int | None = None
+        self._cameras_offline: list[str] | None = None
+        self._cameras_search_failing: list[str] | None = None
         self._last_sent: datetime | None = None
         self._sent_hub_ok: bool | None = None
         self._last_ok: datetime | None = None
@@ -37,6 +39,18 @@ class Heartbeat:
     def set_mode_request_result(self, result: dict | None) -> None:
         """The outcome of the last remote mode request ({"id","status","error","at"}). A new one is sent at once."""
         self._mode_request = dict(result) if result else None
+
+    def set_cameras_offline(self, names: list[str] | None) -> None:
+        """Known cameras the hub's latest status said are offline. None (no status this cycle) keeps
+        the previous list; it is null only until the first status."""
+        if names is not None:
+            self._cameras_offline = sorted(names)
+
+    def set_cameras_search_failing(self, names: list[str] | None) -> None:
+        """Known cameras whose search failed in the last cycle that ran (their clips wait, and age out
+        after backfill_days). None (the cycle failed) keeps the previous list."""
+        if names is not None:
+            self._cameras_search_failing = sorted(names)
 
     def suppress(self, on: bool) -> None:
         """While on, nothing is sent (e.g. after a WebDAV 401: a PUT would add a failed login)."""
@@ -75,6 +89,9 @@ class Heartbeat:
             "hub_ok": self._hub_ok,
             "hub_error_since": self._hub_error_since.isoformat(timespec="seconds") if self._hub_error_since else None,
             "cameras": self._cameras,
+            "cameras_offline": list(self._cameras_offline) if self._cameras_offline is not None else None,
+            "cameras_search_failing": (list(self._cameras_search_failing)
+                                       if self._cameras_search_failing is not None else None),
             "last_error": self._last_error,
             "last_ok": self._last_ok.isoformat(timespec="seconds") if self._last_ok else None,
             "hub_clock_skew_seconds": round(self._skew) if self._skew is not None else None,

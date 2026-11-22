@@ -170,3 +170,29 @@ async def test_sent_state_is_what_was_sent():
     assert dav.puts[0][1]["mode_request"] is None
     assert await hb.maybe_send(dav, T0 + timedelta(seconds=1)) is True
     assert dav.puts[1][1]["mode_request"] == result and dav.puts[1][1]["mode"] == "away"
+
+
+async def test_offline_cameras_reported():
+    hb, dav = Heartbeat(0), Dav()
+    hb.record(True, None, 4, T0)
+    assert hb.payload(T0)["cameras_offline"] is None  # never refreshed
+    hb.set_cameras_offline(["Living Room", "Backyard"])
+    await hb.maybe_send(dav, T0)
+    body = dav.puts[-1][1]
+    assert body["cameras"] == 4 and body["cameras_offline"] == ["Backyard", "Living Room"]
+    hb.set_cameras_offline(None)  # this cycle's refresh failed: the latest known status stands
+    assert hb.payload(T0)["cameras_offline"] == ["Backyard", "Living Room"]
+    hb.set_cameras_offline([])
+    assert hb.payload(T0)["cameras_offline"] == []
+
+
+async def test_search_failing_cameras_reported():
+    hb, dav = Heartbeat(0), Dav()
+    assert hb.payload(T0)["cameras_search_failing"] is None  # no cycle yet
+    hb.set_cameras_search_failing(["Living Room", "Backyard"])
+    await hb.maybe_send(dav, T0)
+    assert dav.puts[-1][1]["cameras_search_failing"] == ["Backyard", "Living Room"]
+    hb.set_cameras_search_failing(None)  # a failed cycle: the latest known list stands
+    assert hb.payload(T0)["cameras_search_failing"] == ["Backyard", "Living Room"]
+    hb.set_cameras_search_failing([])
+    assert hb.payload(T0)["cameras_search_failing"] == []

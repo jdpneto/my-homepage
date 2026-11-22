@@ -8,6 +8,8 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Literal
 
+from .model import Camera
+
 Status = Literal["new", "uploaded", "failed"]
 
 _SCHEMA = """
@@ -90,6 +92,30 @@ class StateStore:
             self._db.execute(
                 "INSERT INTO meta (name, value) VALUES ('watermark', ?) "
                 "ON CONFLICT(name) DO UPDATE SET value=excluded.value", (dt.isoformat(),))
+
+    def get_camera_watermark(self, channel: int) -> datetime | None:
+        """How far this camera (hub slot) has been caught up; None until its first full search."""
+        value = self._get_meta(f"watermark.ch{channel}")
+        return datetime.fromisoformat(value) if value else None
+
+    def set_camera_watermark(self, channel: int, dt: datetime) -> None:
+        with self._txn():
+            self._set_meta(f"watermark.ch{channel}", dt.isoformat())
+
+    def get_known_cameras(self) -> dict[int, Camera]:
+        """Every hub slot ever seen with a camera UID: channel -> Camera (online unknown)."""
+        value = self._get_meta("known_cameras")
+        if not value:
+            return {}
+        return {int(ch): Camera(int(ch), str(cam["name"]), str(cam["uid"]))
+                for ch, cam in json.loads(value).items()}
+
+    def set_known_cameras(self, cameras: dict[int, Camera]) -> None:
+        """Replace the remembered cameras (name and UID only: the online status is not kept)."""
+        value = json.dumps({str(ch): {"name": cam.name, "uid": cam.uid} for ch, cam in sorted(cameras.items())},
+                           ensure_ascii=False)
+        with self._txn():
+            self._set_meta("known_cameras", value)
 
     def get_applied_mode_request(self) -> str | None:
         """Id of the last mode request handled (applied, failed or expired): never handled twice."""

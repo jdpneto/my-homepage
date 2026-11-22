@@ -28,7 +28,12 @@ class FakeHub:
             raise HubError("login refused")
         self.connected = True
 
-    async def list_clips(self, start, end):
+    async def refresh_cameras(self, known):
+        from camera_uploader.model import Camera
+
+        return {**known, 0: Camera(0, "Garage", "uid0", online=True)}
+
+    async def list_clips(self, camera, start, end):
         if self.fail_list:
             raise HubError("session expired")
         return []
@@ -222,14 +227,14 @@ async def test_cycle_uses_hub_clock_and_warns_on_skew(cfg, caplog):
         async def now(self):
             return hub_time
 
-        async def list_clips(self, start, end):
+        async def list_clips(self, camera, start, end):
             SkewedHub.windows.append((start, end))
             return []
 
     sleep, _ = sleeper(1)
     with pytest.raises(Stop):
         await run_forever(cfg, lambda c: SkewedHub(), lambda c: FakeDav(), sleep=sleep, clock=lambda: NOW)
-    assert SkewedHub.windows[0][1] == hub_time
+    assert SkewedHub.windows[-1][1] == hub_time  # (a first search is in slices, oldest first)
     assert "clock" in caplog.text.lower()
 
 
@@ -313,7 +318,7 @@ async def test_cycle_aborted_is_not_reported_as_hub_down(cfg):
     from camera_uploader.cycle import CycleAborted
 
     class AbortingHub(FakeHub):
-        async def list_clips(self, start, end):
+        async def list_clips(self, camera, start, end):
             raise CycleAborted("remux: cannot run ffmpeg")
 
     class RecordingDav(FakeDav):
@@ -452,7 +457,7 @@ async def test_mode_request_result_sent_before_the_cycle_ends(cfg):
         async def switch_mode(self, name, not_after=None):
             SlowCycleHub.current = name
 
-        async def list_clips(self, start, end):
+        async def list_clips(self, camera, start, end):
             # Still in the cycle (a long catch-up would follow): the page must already see the result.
             seen_during_cycle.extend(Dav.beats)
             return []
@@ -464,3 +469,74 @@ async def test_mode_request_result_sent_before_the_cycle_ends(cfg):
     assert reported, seen_during_cycle
     assert reported[-1]["mode_request"]["id"] == "req-7" and reported[-1]["mode_request"]["status"] == "applied"
     assert reported[-1]["mode"] == "away"
+
+
+async def test_heartbeat_reports_known_and_offline_cameras(cfg):
+    import json as _json
+
+    from camera_uploader.model import Camera
+    from camera_uploader.state import StateStore
+
+    store = StateStore(cfg.state_path)
+    store.set_known_cameras({ch: Camera(ch, n, f"uid{ch}") for ch, n in
+                             enumerate(("Garage", "Backyard", "Living Room", "Front door"))})
+    store.close()
+
+    class OneOnlineHub(FakeHub):
+        refreshes = 0
+
+        async def refresh_cameras(self, known):
+            OneOnlineHub.refreshes += 1
+            if OneOnlineHub.refreshes > 1:
+                return known  # the second refresh fails: the latest status stands
+            return {ch: Camera(c.channel, c.name, c.uid, online=(ch == 0)) for ch, c in known.items()}
+
+    class RecordingDav(FakeDav):
+        def __init__(self):
+            super().__init__()
+            self.bodies = []
+
+        async def put_bytes(self, path, data, content_type):
+            if path == "heartbeat.json":
+                self.bodies.append(_json.loads(data))
+
+    dav = RecordingDav()
+    sleep, _ = sleeper(2)
+    with pytest.raises(Stop):
+        await run_forever(cfg, lambda c: OneOnlineHub(), lambda c: dav, sleep=sleep, clock=lambda: NOW)
+    assert dav.bodies[0]["cameras"] == 4  # known cameras, not reolink-aio's login-time channel list
+    assert dav.bodies[0]["cameras_offline"] == ["Backyard", "Front door", "Living Room"]
+    assert dav.bodies[0]["cameras_search_failing"] == []
+    assert OneOnlineHub.refreshes == 2
+
+
+async def test_heartbeat_reports_cameras_whose_search_fails(cfg):
+    import json as _json
+
+    from camera_uploader.hub import CameraSearchError
+    from camera_uploader.model import Camera
+
+    class LivingRoomFailsHub(FakeHub):
+        async def refresh_cameras(self, known):
+            return {0: Camera(0, "Garage", "uid0", online=True), 2: Camera(2, "Living Room", "uid2", online=True)}
+
+        async def list_clips(self, camera, start, end):
+            if camera.channel == 2:
+                raise CameraSearchError("search channel 2 (Living Room): ApiError: busy")
+            return []
+
+    class RecordingDav(FakeDav):
+        def __init__(self):
+            super().__init__()
+            self.bodies = []
+
+        async def put_bytes(self, path, data, content_type):
+            if path == "heartbeat.json":
+                self.bodies.append(_json.loads(data))
+
+    dav = RecordingDav()
+    sleep, _ = sleeper(1)
+    with pytest.raises(Stop):
+        await run_forever(cfg, lambda c: LivingRoomFailsHub(), lambda c: dav, sleep=sleep, clock=lambda: NOW)
+    assert dav.bodies[0]["cameras_search_failing"] == ["Living Room"]
+    assert dav.bodies[0]["hub_ok"] is True  # the hub answered; one camera is the problem

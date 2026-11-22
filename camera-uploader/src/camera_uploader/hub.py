@@ -4,18 +4,19 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from dataclasses import replace
 from datetime import datetime
 from pathlib import Path
 
 from reolink_aio.api import Host
 from reolink_aio.const import UNKNOWN
-from reolink_aio.exceptions import CredentialsInvalidError, ReolinkError
+from reolink_aio.exceptions import CredentialsInvalidError, LoginError, ReolinkConnectionError, ReolinkError
 from reolink_aio.typings import VOD_trigger
 
 from .config import Config
 from .guard import HubWriteBlocked, install_read_only_guard, set_listed_scene
 from .mode_request import SWITCHABLE
-from .model import Clip
+from .model import Camera, Clip
 
 log = logging.getLogger(__name__)
 
@@ -24,10 +25,30 @@ DOWNLOAD_TIMEOUT = 300
 CONNECT_TIMEOUT = 60
 MODE_TIMEOUT = 15
 SWITCH_TIMEOUT = 30
+STATUS_TIMEOUT = 30
+
+# Read-only (a Get* HTTP command, let through by the guard). Lists every slot, online or not.
+CHANNEL_STATUS = [{"cmd": "GetChannelstatus", "action": 0, "param": {}}]
+
+# Failures of the link to the hub, not of one camera's search: the session is suspect, stop using it.
+LINK_ERRORS = (asyncio.TimeoutError, OSError, ReolinkConnectionError, CredentialsInvalidError, LoginError,
+               HubWriteBlocked)
+
+# reolink-aio's search gives up after 50 pages with only this warning, then returns what it has.
+_SEARCH_LOGGER = "reolink_aio.baichuan.baichuan"
+_SEARCH_CAP_TEXT = "search_vod_type took more"
 
 
 class HubError(Exception):
     """The hub could not be reached, refused, or misbehaved."""
+
+
+class CameraSearchError(HubError):
+    """One camera's search failed but the hub answered: the other cameras can still be searched."""
+
+
+class SearchTruncated(CameraSearchError):
+    """reolink-aio stopped after 50 pages and returned part of the list: search shorter spans."""
 
 
 class HubAuthError(HubError):
@@ -50,6 +71,38 @@ def clips_from_search(channel: int, camera_name: str, camera_id: str, vod_by_tri
     ]
 
 
+def merge_channel_status(known: dict[int, Camera], response) -> dict[int, Camera]:
+    """`known` updated from a GetChannelstatus answer; raises ValueError when the answer is unusable.
+
+    A slot reporting a UID is learned (online or not); a slot reporting no name or UID keeps the
+    remembered ones (battery cameras that are asleep or offline often report neither). Known
+    cameras get the slot's online flag; a slot never seen with a UID is not a camera.
+    """
+    try:
+        (data,) = [d for d in response if isinstance(d, dict) and d.get("cmd") == "GetChannelstatus"]
+        if data.get("code") != 0:
+            raise ValueError(f"hub answered code {data.get('code')!r}: {data.get('error')!r}")
+        slots = data["value"]["status"]
+        if not isinstance(slots, list):
+            raise TypeError("status is not a list")
+    except (TypeError, KeyError, ValueError) as exc:
+        raise ValueError(f"unusable GetChannelstatus answer: {type(exc).__name__}: {exc}") from exc
+    merged = {ch: replace(cam, online=None) for ch, cam in known.items()}
+    for info in slots:
+        if not isinstance(info, dict) or type(info.get("channel")) is not int:
+            continue
+        ch = info["channel"]
+        uid = info.get("uid") if isinstance(info.get("uid"), str) else ""
+        name = info.get("name") if isinstance(info.get("name"), str) else ""
+        name = "" if name.strip() in ("", "0", "1") else name.strip()  # some devices answer "0"/"1"
+        old = merged.get(ch)
+        if old is None and not uid:
+            continue
+        merged[ch] = Camera(ch, name or (old.name if old else "") or f"Camera {ch + 1}",
+                            uid or old.uid, online=info.get("online") == 1)
+    return merged
+
+
 def count_untyped(vod_by_time: dict) -> int:
     """Recordings the hub reported with no trigger reolink-aio understands.
 
@@ -57,6 +110,25 @@ def count_untyped(vod_by_time: dict) -> int:
     types; these exist only as a count, so they cannot be downloaded.
     """
     return sum(1 for t in vod_by_time.values() if t == VOD_trigger.NONE)
+
+
+def _library_uid(value) -> str:
+    """A UID as reolink-aio compares it (it drops a "_..." suffix); "" when unknown."""
+    if not isinstance(value, str) or value in ("", UNKNOWN):
+        return ""
+    return value.split("_")[0]
+
+
+class _SearchCapWatch(logging.Handler):
+    """Notices reolink-aio's "took more then 50 itterations" warning during one search."""
+
+    def __init__(self):
+        super().__init__(logging.WARNING)
+        self.hit = False
+
+    def emit(self, record: logging.LogRecord) -> None:
+        if _SEARCH_CAP_TEXT in str(record.msg):
+            self.hit = True
 
 
 class ReolinkHub:
@@ -168,39 +240,102 @@ class ReolinkHub:
                 raise self._wrap("get hub time", exc) from exc
         return current.replace(tzinfo=None)
 
-    @property
-    def camera_count(self) -> int | None:
-        return len(self._host.channels) if self._host is not None else None
-
     async def info(self) -> dict:
         host = self._require()
         return {"model": host.model, "firmware": host.sw_version}
 
-    def _camera_id(self, ch: int) -> str:
-        host = self._require()
-        uid = host.camera_uid(ch)
-        if uid and uid != UNKNOWN:
-            return uid
-        return f"ch{ch}-{host.camera_model(ch)}"
+    async def refresh_cameras(self, known: dict[int, Camera]) -> dict[int, Camera]:
+        """`known` updated from the hub's slot list (read-only GetChannelstatus). Never raises:
+        on any failure the remembered cameras are returned as they are (online unknown).
 
-    async def list_clips(self, start: datetime, end: datetime) -> list[Clip]:
+        reolink-aio's own channel list is filled only at login and only with the slots online
+        then; battery cameras come and go, so the uploader keeps its own list instead.
+        """
+        base = self._with_login_cameras(known)
+        try:
+            response = await asyncio.wait_for(
+                self._require().send(CHANNEL_STATUS, expected_response_type="json"), STATUS_TIMEOUT)
+            merged = merge_channel_status(base, response)
+        except (asyncio.CancelledError, KeyboardInterrupt, SystemExit):
+            raise
+        except BaseException as exc:
+            log.warning("could not read the hub's camera list, using the remembered one: %s: %s",
+                        type(exc).__name__, exc)
+            merged = base
+        for ch, cam in sorted(merged.items()):
+            old = known.get(ch)
+            if old is None:
+                log.info("learned camera %r on channel %s (uid %s)", cam.name, ch, cam.uid)
+            elif (old.name, old.uid) != (cam.name, cam.uid):
+                log.info("camera on channel %s is now %r (uid %s), was %r (uid %s)",
+                         ch, cam.name, cam.uid, old.name, old.uid)
+        return merged
+
+    def _with_login_cameras(self, known: dict[int, Camera]) -> dict[int, Camera]:
+        """`known` plus the slots reolink-aio learned with a UID at login (remembered values win)."""
+        host = self._host
+        cameras = dict(known)
+        if host is None:
+            return cameras
+        try:
+            for ch in host.channels:
+                uid = host.camera_uid(ch)
+                if ch in cameras or type(ch) is not int or not isinstance(uid, str) or uid in ("", UNKNOWN):
+                    continue
+                name = host.camera_name(ch)
+                name = name.strip() if isinstance(name, str) and name not in ("", UNKNOWN) else ""
+                cameras[ch] = Camera(ch, name or f"Camera {ch + 1}", uid)
+        except Exception as exc:  # login data is a bonus; never fail the refresh over it
+            log.warning("could not read the cameras reolink-aio learned at login: %s: %s", type(exc).__name__, exc)
+            return dict(known)
+        return cameras
+
+    @staticmethod
+    def _teach(host: Host, channel: int, name: str, uid: str) -> None:
+        """reolink-aio refuses to search or download a slot whose UID it doesn't know ("cannot get
+        UID for channel"), and learns UIDs only at login, for the slots online then. The uploader's
+        list (refreshed every cycle) is the authority: a missing or stale UID or name is replaced."""
+        uids, names = host._uid, host._name
+        if uid and _library_uid(uids.get(channel)) != _library_uid(uid):
+            uids[channel] = uid
+        if name and names.get(channel) != name:
+            names[channel] = name
+
+    async def list_clips(self, camera: Camera, start: datetime, end: datetime) -> list[Clip]:
+        """This camera's clips that start in [start, end].
+
+        Raises CameraSearchError when the hub answered but this camera's search failed (other
+        cameras can still be searched), SearchTruncated when reolink-aio stopped after 50 pages
+        (search shorter spans), and a plain HubError when the link to the hub failed.
+        """
         host = self._require()
-        clips: list[Clip] = []
-        for ch in host.channels:
-            try:
-                by_time, by_trigger = await asyncio.wait_for(
-                    host.baichuan.search_vod_type(ch, start, end, stream="main"), SEARCH_TIMEOUT)
-            except BaseException as exc:
-                raise self._wrap(f"search channel {ch}", exc) from exc
-            untyped = count_untyped(by_time)
-            if untyped:
-                log.warning("channel %s: %d recording(s) with an unknown trigger type cannot be listed "
-                            "by reolink-aio and are skipped", ch, untyped)
-            clips.extend(clips_from_search(ch, host.camera_name(ch), self._camera_id(ch), by_trigger))
+        ch = camera.channel
+        what = f"search channel {ch} ({camera.name})"
+        self._teach(host, ch, camera.name, camera.uid)
+        watch = _SearchCapWatch()
+        library_log = logging.getLogger(_SEARCH_LOGGER)
+        library_log.addHandler(watch)
+        try:
+            by_time, by_trigger = await asyncio.wait_for(
+                host.baichuan.search_vod_type(ch, start, end, stream="main"), SEARCH_TIMEOUT)
+        except BaseException as exc:
+            if isinstance(exc, ReolinkError) and not isinstance(exc, LINK_ERRORS):
+                raise CameraSearchError(f"{what}: {type(exc).__name__}: {exc}") from exc
+            raise self._wrap(what, exc) from exc
+        finally:
+            library_log.removeHandler(watch)
+        if watch.hit:
+            raise SearchTruncated(f"{what}: reolink-aio stopped after 50 pages for {start} - {end}")
+        untyped = count_untyped(by_time)
+        if untyped:
+            log.warning("channel %s: %d recording(s) with an unknown trigger type cannot be listed "
+                        "by reolink-aio and are skipped", ch, untyped)
+        clips = clips_from_search(ch, camera.name, camera.uid, by_trigger)
         return sorted(clips, key=lambda c: (c.start, c.channel))
 
     async def download(self, clip: Clip, dest: Path) -> int:
         host = self._require()
+        self._teach(host, clip.channel, clip.camera_name, clip.camera_id)
         try:
             data = await asyncio.wait_for(
                 host.baichuan.download_mp4(clip.channel, clip.start, clip.end, stream="main",

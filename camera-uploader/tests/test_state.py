@@ -79,3 +79,35 @@ def test_applied_mode_request_roundtrip(tmp_path):
     StateStore(path).set_applied_mode_request("req-2")
     assert StateStore(path).get_applied_mode_request() == "req-2"
     assert StateStore(path).get_watermark() is None  # separate meta rows
+
+
+def test_known_cameras_roundtrip(tmp_path):
+    from camera_uploader.model import Camera
+
+    path = tmp_path / "s.db"
+    assert StateStore(path).get_known_cameras() == {}
+    StateStore(path).set_known_cameras({
+        0: Camera(0, "Garage", "9527000O0NWN1LLO", online=True),
+        1: Camera(1, "Pátio dos fundos", "9527000OBACKYARD", online=False),
+    })
+    # Survives a restart; the online status is only the latest refresh's, never stored.
+    assert StateStore(path).get_known_cameras() == {
+        0: Camera(0, "Garage", "9527000O0NWN1LLO"),
+        1: Camera(1, "Pátio dos fundos", "9527000OBACKYARD"),
+    }
+    StateStore(path).set_known_cameras({0: Camera(0, "Garage door", "9527000O0NWN1LLO")})
+    assert StateStore(path).get_known_cameras() == {0: Camera(0, "Garage door", "9527000O0NWN1LLO")}
+    assert StateStore(path).get_watermark() is None  # separate meta rows
+
+
+def test_per_camera_watermark_roundtrip(tmp_path):
+    path = tmp_path / "s.db"
+    assert StateStore(path).get_camera_watermark(1) is None
+    StateStore(path).set_camera_watermark(1, datetime(2026, 11, 21, 15, 23, 0))
+    StateStore(path).set_camera_watermark(0, datetime(2026, 11, 22, 2, 1, 0))
+    assert StateStore(path).get_camera_watermark(1) == datetime(2026, 11, 21, 15, 23, 0)
+    assert StateStore(path).get_camera_watermark(0) == datetime(2026, 11, 22, 2, 1, 0)
+    assert StateStore(path).get_camera_watermark(2) is None
+    assert StateStore(path).get_watermark() is None  # the old global watermark is a different row
+    StateStore(path).set_watermark(datetime(2026, 11, 20, 0, 0, 0))
+    assert StateStore(path).get_camera_watermark(1) == datetime(2026, 11, 21, 15, 23, 0)
