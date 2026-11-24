@@ -206,11 +206,13 @@ class RememberDeviceIT {
     @Test
     void lastUsedRolledForward() throws Exception {
         Cookie c = rememberedDevice();
-        Instant tenMinutesAgo = Instant.now().minus(Duration.ofMinutes(10));
+        // Linux clocks give nanoseconds; force some so this fails the same way on a Mac (CI runs on Linux).
+        Instant tenMinutesAgo = Instant.now().minus(Duration.ofMinutes(10)).truncatedTo(java.time.temporal.ChronoUnit.MICROS).plusNanos(123);
         setLastUsed(tenMinutesAgo);
         assertThat(signedIn(c)).isTrue();
-        // at most one write an hour
-        assertThat(remembered.findAll().get(0).getLastUsedAt()).isEqualTo(tenMinutesAgo);
+        // at most one write an hour: the stored time is unchanged (the column keeps microseconds)
+        assertThat(remembered.findAll().get(0).getLastUsedAt())
+                .isEqualTo(tenMinutesAgo.truncatedTo(java.time.temporal.ChronoUnit.MICROS));
 
         setLastUsed(Instant.now().minus(Duration.ofHours(2)));
         MockHttpServletResponse r = withCookie("/admin/posts", c);
