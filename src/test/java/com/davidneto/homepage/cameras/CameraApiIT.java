@@ -432,4 +432,58 @@ class CameraApiIT {
                     .andExpect(status().isBadRequest());
         }
     }
+
+    /** day -> [count, bytes] of a GET /days answer, in order. */
+    java.util.LinkedHashMap<String, List<Long>> days(String url) throws Exception {
+        JsonNode r = getJson(url);
+        assertThat(r.isArray()).isTrue();
+        java.util.LinkedHashMap<String, List<Long>> out = new java.util.LinkedHashMap<>();
+        r.forEach(d -> out.put(d.get("day").asString(), List.of(d.get("count").asLong(), d.get("bytes").asLong())));
+        return out;
+    }
+
+    @Test
+    void daysEndpointCountsAndSizesPerDayWithFilters() throws Exception {
+        // 00:30 local on the 17th is still the 16th in UTC: it counts for the 17th (the cameras' own day)
+        clip("Garage", "2026-11-17", "00-30-00", "2026-11-17T00:30:00+01:00", "person");
+        clip("Living Room", "2026-11-16", "23-59-00", "2026-11-16T23:59:00+01:00", "motion");
+        indexer.reconcile();
+
+        var all = days("/api/cameras/days");
+        assertThat(all.keySet()).containsExactly("2026-11-18", "2026-11-17", "2026-11-16"); // newest first
+        assertThat(all.get("2026-11-18")).containsExactly(3L, 3000L);
+        assertThat(all.get("2026-11-17")).containsExactly(1L, 1000L);
+        assertThat(all.get("2026-11-16")).containsExactly(1L, 1000L);
+
+        // each day's bounds, for GET /clips?from=&to= (in the cameras' offset)
+        JsonNode first = getJson("/api/cameras/days").get(0);
+        assertThat(java.time.OffsetDateTime.parse(first.get("from").asString()))
+                .isEqualTo(java.time.OffsetDateTime.parse("2026-11-18T00:00:00+01:00"));
+        assertThat(java.time.OffsetDateTime.parse(first.get("to").asString()))
+                .isEqualTo(java.time.OffsetDateTime.parse("2026-11-19T00:00:00+01:00"));
+        JsonNode firstDayClips = getJson("/api/cameras/clips?from=" + first.get("from").asString().replace("+", "%2B")
+                + "&to=" + first.get("to").asString().replace("+", "%2B"));
+        assertThat(firstDayClips.get("clips")).hasSize(3);
+
+        var livingRoom = days("/api/cameras/days?camera=Living%20Room");
+        assertThat(livingRoom.keySet()).containsExactly("2026-11-18", "2026-11-16");
+        assertThat(livingRoom.get("2026-11-16")).containsExactly(1L, 1000L);
+
+        var person = days("/api/cameras/days?trigger=person");
+        assertThat(person.keySet()).containsExactly("2026-11-18", "2026-11-17");
+        assertThat(person.get("2026-11-18")).containsExactly(2L, 2000L);
+
+        assertThat(days("/api/cameras/days?kept=true")).isEmpty();
+        long id = repo.findByStem("Living Room/2026-11-16/23-59-00").orElseThrow().getId();
+        mvc.perform(put("/api/cameras/clips/" + id + "/keep").with(admin).with(csrf())).andExpect(status().isOk());
+        var kept = days("/api/cameras/days?kept=true");
+        assertThat(kept.keySet()).containsExactly("2026-11-16");
+        assertThat(days("/api/cameras/days?kept=false").get("2026-11-16")).isNull();
+        assertThat(days("/api/cameras/days?camera=Garage&trigger=motion").keySet()).containsExactly("2026-11-18");
+    }
+
+    @Test
+    void daysNeedsAuth() throws Exception {
+        mvc.perform(get("/api/cameras/days")).andExpect(status().isUnauthorized());
+    }
 }

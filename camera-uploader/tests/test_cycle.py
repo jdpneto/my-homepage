@@ -569,6 +569,50 @@ async def test_mode_request_reported_at_once(cfg, store):
     assert result.mode_request["status"] == "applied" and result.uploaded == 1
 
 
+async def test_switch_updates_heartbeat_mode_with_the_result(cfg, store):
+    # The switch's own read-back confirmed the hub is in away: that mode goes out with the result,
+    # even when the hub's next mode read fails (it is busy right after a scene change).
+    reports = []
+
+    class BusyAfterSwitchHub(FakeHub):
+        reads_after_switch = 0
+
+        async def mode(self):
+            if self.scene_writes:
+                self.reads_after_switch += 1
+                if self.reads_after_switch > 1:
+                    return None  # only the switch's read-back got an answer
+            return self._mode
+
+    async def report(result, mode):
+        reports.append((result["status"], result["error"], mode))
+
+    hub = BusyAfterSwitchHub([], mode="home")
+    await run_cycle(hub, request_dav(mode_request("away")), store, cfg, NOW, remux_fn=copy_remux,
+                    tz=TZ, wall_clock=lambda: WALL, on_mode_request=report)
+    assert reports == [("applied", None, "away")]
+
+    # Not confirmed (the read-back failed) or failed: the hub's mode is read for the report as before.
+    reports.clear()
+
+    class BlindHub(FakeHub):
+        async def mode(self):
+            return None
+
+    await run_cycle(BlindHub([], mode="home"), request_dav(mode_request("away", rid="req-2")), store, cfg,
+                    NOW, remux_fn=copy_remux, tz=TZ, wall_clock=lambda: WALL, on_mode_request=report)
+    assert reports == [("applied", "not confirmed", None)]
+    reports.clear()
+
+    class StuckHub(FakeHub):
+        async def switch_mode(self, name, not_after=None):
+            self.switch_calls.append(name)  # the hub said OK but stays in home
+
+    await run_cycle(StuckHub([], mode="home"), request_dav(mode_request("away", rid="req-3")), store, cfg,
+                    NOW, remux_fn=copy_remux, tz=TZ, wall_clock=lambda: WALL, on_mode_request=report)
+    assert reports == [("failed", "hub did not switch", "home")]
+
+
 # --- every known camera, online or not (22 Nov 2026 incident) ----------------------
 
 GARAGE = Camera(0, "Garage", "uid0")

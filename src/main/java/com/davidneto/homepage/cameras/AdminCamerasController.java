@@ -30,12 +30,15 @@ public class AdminCamerasController {
     private final AlertMute mute;
     private final Clock clock;
     private final ModeRequests modeRequests;
+    private final CameraProperties props;
 
-    public AdminCamerasController(ClipService clips, AlertMute mute, Clock clock, ModeRequests modeRequests) {
+    public AdminCamerasController(ClipService clips, AlertMute mute, Clock clock, ModeRequests modeRequests,
+                                  CameraProperties props) {
         this.clips = clips;
         this.mute = mute;
         this.clock = clock;
         this.modeRequests = modeRequests;
+        this.props = props;
     }
 
     @GetMapping
@@ -45,12 +48,29 @@ public class AdminCamerasController {
                        Model model, HttpServletResponse response) {
         response.setHeader("X-Robots-Tag", "noindex, nofollow");
         String cam = blankToNull(camera), trig = blankToNull(trigger);
-        List<ClipView> page = clips.list(new ClipQuery(cam, trig, null, null, kept, null, PAGE_SIZE));
         OffsetDateTime now = clock.instant().atOffset(ZoneOffset.UTC);
         StorageStatus status = clips.status();
-
-        model.addAttribute("groups", group(page, now));
         List<CameraSummary> cameras = clips.cameraSummaries();
+        // Show times in the cameras' own offset (the server runs in UTC): the newest clip of any
+        // camera, never the filtered list (which can be empty or months old). The browser
+        // re-renders it in its own time zone from data-until anyway.
+        ZoneOffset localOffset = cameras.stream().map(CameraSummary::latestStart).filter(java.util.Objects::nonNull)
+                .max(java.util.Comparator.naturalOrder()).map(OffsetDateTime::getOffset).orElse(ZoneOffset.UTC);
+
+        // Only today's clips are rendered (and scrolled through); every older day is one collapsed
+        // row with its count and size, its clips loaded by the script when it is opened.
+        LocalDate today = now.withOffsetSameInstant(localOffset).toLocalDate();
+        OffsetDateTime todayStart = today.atStartOfDay().atOffset(localOffset);
+        List<ClipView> page = clips.list(new ClipQuery(cam, trig, todayStart, null, kept, null, PAGE_SIZE));
+        model.addAttribute("groups", group(page, now));
+        model.addAttribute("todayFrom", todayStart.toString());
+        List<ClipDayRow> olderDays = new ArrayList<>();
+        for (ClipDay d : clips.days(cam, trig, kept)) {
+            if (!LocalDate.parse(d.day()).isBefore(today)) continue; // today (and a wrong hub clock's future) are rows
+            olderDays.add(new ClipDayRow(dayLabel(d.from(), now), d.day(), d.count(), d.bytes(),
+                    " · " + d.count() + (d.count() == 1 ? " clip" : " clips") + " · " + mb(d.bytes()), d.from(), d.to()));
+        }
+        model.addAttribute("olderDays", olderDays);
         model.addAttribute("cameras", cameras);
         java.util.Map<String, String> lastClip = new java.util.HashMap<>();
         for (CameraSummary c : cameras) {
@@ -66,8 +86,9 @@ public class AdminCamerasController {
         model.addAttribute("now", now);
 
         long free = status.quotaBytes() > 0 ? Math.max(0, status.quotaBytes() - status.quotaUsed()) : status.volumeFree();
-        model.addAttribute("storageText", "Kept " + size(status.keptBytes()) + " · Last 30 days "
-                + size(status.unkeptBytes()) + " · Free " + size(free));
+        model.addAttribute("retentionDays", props.getRetentionDays());
+        model.addAttribute("storageText", "Kept " + size(status.keptBytes()) + " · Last " + props.getRetentionDays()
+                + " days " + size(status.unkeptBytes()) + " · Free " + size(free));
         model.addAttribute("storageLevel", level(status));
         model.addAttribute("healthText", health(status, now));
         // Mode switch: the hub's mode from the heartbeat highlights its button; a mode with no
@@ -77,11 +98,6 @@ public class AdminCamerasController {
         model.addAttribute("hubModeOther", mode != null && ModeRequests.normalise(mode) == null ? mode : null);
         ModeRequests.RequestStatus request = modeRequests.state().request();
         model.addAttribute("modePending", request != null && request.pending() ? request : null);
-        // Show times in the cameras' own offset (the server runs in UTC): the newest clip of any
-        // camera, never the filtered list (which can be empty or months old). The browser
-        // re-renders it in its own time zone from data-until anyway.
-        ZoneOffset localOffset = cameras.stream().map(CameraSummary::latestStart).filter(java.util.Objects::nonNull)
-                .max(java.util.Comparator.naturalOrder()).map(OffsetDateTime::getOffset).orElse(ZoneOffset.UTC);
         model.addAttribute("alertsText", alertsText(mute.get(), localOffset));
         model.addAttribute("alertsMuted", mute.get().muted());
         model.addAttribute("alertsUntil", mute.get().until() == null ? null : mute.get().until().toString());
@@ -111,6 +127,14 @@ public class AdminCamerasController {
         if (day.equals(today)) return "Today";
         if (day.equals(today.minusDays(1))) return "Yesterday";
         return DAY.format(day);
+    }
+
+    /** Same format as the script's mb(): "3.4 MB" under 10 MB, else "34 MB". */
+    static String mb(long bytes) {
+        double v = bytes / 1048576.0;
+        if (v <= 0) return "0 MB";
+        if (v < 0.05) return "< 0.1 MB";
+        return (v < 9.95 ? String.format(Locale.ENGLISH, "%.1f", v) : String.valueOf(Math.round(v))) + " MB";
     }
 
     static String size(long bytes) {

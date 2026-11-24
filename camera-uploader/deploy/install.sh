@@ -122,7 +122,7 @@ if launchctl print "system/$LABEL" >/dev/null 2>&1; then
     STOPPED=yes
 fi
 
-say "Test run of the new release (--once). The first run uploads up to 30 days of clips and can take a while."
+say "Test run of the new release (--once). The first run uploads up to 14 days of clips and can take a while."
 if ! "$RELEASE/venv/bin/camera-uploader" --config "$TEST_CONFIG" --once; then
     die "test run failed - see $LOGDIR/uploader.log. Nothing was switched over. Wrong password? rerun with --reconfigure"
 fi

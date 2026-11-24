@@ -75,6 +75,21 @@ public class CameraApiController {
         return body;
     }
 
+    /**
+     * Clips per day ({@code [{"day":"2026-11-23","count":412,"bytes":516292498,"from":…,"to":…}]}),
+     * newest day first, days in the cameras' own offset; same filters as {@code /clips}.
+     */
+    @GetMapping("/days")
+    public List<ClipDay> days(@RequestParam(required = false) String camera,
+                              @RequestParam(required = false) String trigger,
+                              @RequestParam(required = false) Boolean kept) {
+        return clips.days(blankToNull(camera), blankToNull(trigger), kept);
+    }
+
+    private static String blankToNull(String s) {
+        return s == null || s.isBlank() ? null : s;
+    }
+
     @GetMapping("/clips/{id}")
     public ClipView get(@PathVariable long id) {
         return clips.get(id).orElseThrow(() -> new ClipNotFoundException(id));

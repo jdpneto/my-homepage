@@ -12,6 +12,9 @@ public interface CameraClipRepository extends JpaRepository<CameraClip, Long>, J
 
     List<CameraClip> findByStartAtBefore(java.time.Instant cutoff);
 
+    /** Clips not kept (per the row), oldest first: the safety net's deletion order. */
+    List<CameraClip> findByKeptFalseOrderByStartAtAscIdAsc();
+
     @Query("select new com.davidneto.homepage.cameras.CameraInfo(c.cameraName, max(c.cameraId)) "
             + "from CameraClip c group by c.cameraName order by c.cameraName")
     List<CameraInfo> findCameras();

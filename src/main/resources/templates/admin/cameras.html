@@ -25,18 +25,23 @@
     <div id="banner" class="cam-banner" hidden></div>
 
     <section id="storage" class="cam-storage" th:classappend="'level-' + ${storageLevel}">
-        <div class="cam-storage-line" th:text="${storageText}">Kept 1.2 GB · Last 30 days 2.1 GB · Free 9.8 GB</div>
+        <div class="cam-storage-line" th:text="${storageText}" th:attr="data-retention-days=${retentionDays}">Kept 1.2 GB · Last 14 days 2.1 GB · Free 9.8 GB</div>
         <div class="cam-health-row">
             <div class="cam-health" th:text="${healthText}">Uploader: last heartbeat 3 min ago · Hub OK</div>
             <!-- Mode switch: the hub's mode (last heartbeat) is aria-pressed. A tap asks the Mac
                  mini to switch (POST /api/cameras/mode); #mode-status follows the request.
-                 data-pending-* are set while a request is pending, so a reload keeps following it. -->
+                 data-pending-* are set while a request is pending, so a reload keeps following it;
+                 the requested mode's button then shows as switching (class + aria-busy). -->
             <div id="mode-switch" class="cam-mode" role="group" aria-labelledby="mode-label"
-                 th:attr="data-current=${hubMode},data-pending-id=${modePending?.id},data-pending-mode=${modePending?.mode}">
+                 th:attr="data-current=${hubMode},data-pending-id=${modePending?.id},data-pending-mode=${modePending?.mode}"
+                 th:with="want=${modePending?.mode}">
                 <span id="mode-label" class="cam-mode-label">Mode:</span>
-                <button type="button" data-mode="disarm" th:attr="aria-pressed=${hubMode == 'disarm'}">Disarm</button>
-                <button type="button" data-mode="home" th:attr="aria-pressed=${hubMode == 'home'}">Home</button>
-                <button type="button" data-mode="away" th:attr="aria-pressed=${hubMode == 'away'}">Away</button>
+                <button type="button" data-mode="disarm" th:classappend="${want == 'disarm'} ? 'switching'"
+                        th:attr="aria-pressed=${hubMode == 'disarm'},aria-busy=${want == 'disarm'} ? 'true' : null">Disarm</button>
+                <button type="button" data-mode="home" th:classappend="${want == 'home'} ? 'switching'"
+                        th:attr="aria-pressed=${hubMode == 'home'},aria-busy=${want == 'home'} ? 'true' : null">Home</button>
+                <button type="button" data-mode="away" th:classappend="${want == 'away'} ? 'switching'"
+                        th:attr="aria-pressed=${hubMode == 'away'},aria-busy=${want == 'away'} ? 'true' : null">Away</button>
                 <span class="cam-mode-other" th:hidden="${hubModeOther == null}"
                       th:text="${hubModeOther != null} ? '(now ' + ${hubModeOther} + ')' : ''">(now off)</span>
                 <span id="mode-status" class="cam-mode-status" role="status"></span>
@@ -98,16 +103,18 @@
         <a th:href="${noCam} ? @{/admin/cameras(kept=true)} : @{/admin/cameras(camera=${camera},kept=true)}"
            th:classappend="${kept == true} ? 'active'"
            th:attr="aria-current=${kept == true} ? 'true' : null">★ Kept</a>
-        <button type="button" id="select-toggle" aria-pressed="false" th:if="${not #lists.isEmpty(groups)}">Select</button>
+        <button type="button" id="select-toggle" aria-pressed="false"
+                th:if="${not #lists.isEmpty(groups) or not #lists.isEmpty(olderDays)}">Select</button>
     </nav>
 
-    <th:block th:if="${#lists.isEmpty(groups)}">
+    <th:block th:if="${#lists.isEmpty(groups) and #lists.isEmpty(olderDays)}">
         <p class="cam-empty" th:if="${camera != null or trigger != null or kept != null}">No clips match this filter.
             <a class="cam-empty-reset" th:href="@{/admin/cameras}">Show all clips</a></p>
         <p class="cam-empty" th:unless="${camera != null or trigger != null or kept != null}">No clips here yet.</p>
     </th:block>
 
-    <div id="clips" th:data-next="${nextBefore}" th:data-query="${query}">
+    <!-- data-from: start of today; the infinite scroll stays within today. -->
+    <div id="clips" th:data-next="${nextBefore}" th:data-query="${query}" th:data-from="${todayFrom}">
         <th:block th:each="g : ${groups}">
             <!-- The script fills .day-meta ("· 12 clips · 34 MB") from the loaded rows. -->
             <h3 class="day"><span class="day-label" th:text="${g.label}">Today</span><span class="day-meta"></span><button type="button" class="day-select" aria-pressed="false">Select day</button><button type="button" class="day-delete">Delete</button></h3>
@@ -126,8 +133,16 @@
                 </li>
             </ul>
         </th:block>
+        <!-- Today's infinite scroll loads when this comes near: right after today's rows. -->
+        <div id="clips-sentinel" aria-hidden="true"></div>
+        <!-- Older days: one collapsed row each ("Yesterday · 412 clips · 492 MB ▸"). Opening one
+             loads its clips (GET /api/cameras/clips with data-from / data-to and the filters),
+             a page at a time ("Load more"). data-count / data-bytes: the server's totals. -->
+        <th:block th:each="d : ${olderDays}">
+            <h3 class="day day-collapsed" th:attr="data-day=${d.day},data-count=${d.count},data-bytes=${d.bytes},data-from=${d.from},data-to=${d.to}"><button type="button" class="day-toggle" aria-expanded="false"><span class="day-label" th:text="${d.label}">Yesterday</span><span class="day-meta" th:text="${d.meta}"> · 412 clips · 492 MB</span><span class="day-caret" aria-hidden="true">▸</span></button><button type="button" class="day-select" aria-pressed="false">Select day</button><button type="button" class="day-delete">Delete</button></h3>
+            <ul class="clip-list" hidden></ul>
+        </th:block>
     </div>
-    <div id="clips-sentinel" aria-hidden="true"></div>
 
     <!-- Select mode (#select-toggle): fixed at the bottom while selecting. -->
     <div id="select-bar" class="cam-select-bar" hidden role="region" aria-label="Selected clips">

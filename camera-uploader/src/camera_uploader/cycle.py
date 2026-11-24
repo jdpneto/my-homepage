@@ -69,19 +69,22 @@ def _wall_now() -> datetime:
     return datetime.now().astimezone()
 
 
-async def handle_mode_request(hub, dav, store: StateStore, wall_now: datetime) -> dict | None:
+async def handle_mode_request(hub, dav, store: StateStore,
+                              wall_now: datetime) -> tuple[dict | None, str | None]:
     """Apply mode-request.json at most once, never after it expired. Never raises.
 
-    Returns the heartbeat's `mode_request` ({"id","status","error","at"}) when a request
-    was handled now, None when there was nothing (new) to handle. `wall_now` is this
-    Mac's own clock (aware): the request's times come from the VPS, not the hub.
+    Returns (result, confirmed mode). The result is the heartbeat's `mode_request`
+    ({"id","status","error","at"}) when a request was handled now, None when there was
+    nothing (new) to handle. The confirmed mode is the requested mode when the switch's
+    read-back showed the hub in it, else None. `wall_now` is this Mac's own clock (aware):
+    the request's times come from the VPS, not the hub.
     """
     global _last_bad_request
     try:
         text = await dav.get_text(MODE_REQUEST)
     except Exception as exc:  # a request is never a reason to stop uploading
         log.warning("could not read %s: %s: %s", MODE_REQUEST, type(exc).__name__, exc)
-        return None
+        return None, None
     try:
         request = parse_request(text)
     except Exception as exc:  # parse_request never raises; belt and braces for the cycle
@@ -91,10 +94,11 @@ async def handle_mode_request(hub, dav, store: StateStore, wall_now: datetime) -
         if text and text.strip() and text != _last_bad_request:
             log.warning("ignoring a malformed %s", MODE_REQUEST)
         _last_bad_request = text
-        return None
+        return None, None
+    confirmed = None
     try:
         if store.get_applied_mode_request() == request.id:
-            return None
+            return None, None
         log.info("mode request %s: switch to %r", request.id, request.mode)
         expires = min(request.expires_at, request.requested_at + MODE_REQUEST_MAX_AGE)
         status, error = "failed", None
@@ -105,21 +109,22 @@ async def handle_mode_request(hub, dav, store: StateStore, wall_now: datetime) -
         # Remembered before the hub write: a crash or timeout can never make it happen twice.
         store.set_applied_mode_request(request.id)
         if error is None:
-            status, error = await _switch(hub, request.mode, expires)
+            status, error, confirmed = await _switch(hub, request.mode, expires)
         result = {"id": request.id, "status": status, "error": error,
                   "at": wall_now.isoformat(timespec="seconds")}
         store.set_applied_mode_request(request.id, result)
     except Exception as exc:
         log.error("mode request %s: %s: %s", request.id, type(exc).__name__, exc)
+        confirmed = None
         result = {"id": request.id, "status": "failed", "error": "uploader error",
                   "at": wall_now.isoformat(timespec="seconds")}
     log.info("mode request %s: %s%s", request.id, result["status"],
              f" ({result['error']})" if result["error"] else "")
-    return result
+    return result, confirmed
 
 
-async def _switch(hub, mode: str, not_after: datetime) -> tuple[str, str | None]:
-    """Switch, then read the mode back: (status, short reason or None).
+async def _switch(hub, mode: str, not_after: datetime) -> tuple[str, str | None, str | None]:
+    """Switch, then read the mode back: (status, short reason or None, `mode` when read back, else None).
 
     The read-back decides even when the switch raised: cmd 602 may have gone through
     before the follow-up read or the wait failed, and then the hub *is* in `mode`.
@@ -138,12 +143,12 @@ async def _switch(hub, mode: str, not_after: datetime) -> tuple[str, str | None]
     if after == mode:
         if error is not None:
             log.info("the hub reported %r switching to %s, but it is in %s now", error, mode, mode)
-        return "applied", None
+        return "applied", None, mode
     if error is not None:
-        return "failed", error
+        return "failed", error, None
     if after is None:
-        return "applied", "not confirmed"  # the hub accepted it; the read-back failed
-    return "failed", "hub did not switch"
+        return "applied", "not confirmed", None  # the hub accepted it; the read-back failed
+    return "failed", "hub did not switch", None
 
 
 async def run_cycle(hub, dav, store: StateStore, cfg: Config, now: datetime,
@@ -151,17 +156,19 @@ async def run_cycle(hub, dav, store: StateStore, cfg: Config, now: datetime,
                     wall_clock: Callable[[], datetime] = _wall_now,
                     on_mode_request: Callable[[dict, str | None], Awaitable[None]] | None = None) -> CycleResult:
     """`on_mode_request(result, mode)` reports a handled mode request at once (the heartbeat),
-    before this cycle's clips: a long catch-up must not hold the result back past its expiry."""
+    before this cycle's clips: a long catch-up must not hold the result back past its expiry.
+    `mode` is the switch's read-back when it confirmed the requested mode (the page highlights
+    it with the result, even if the hub's next read fails), else the hub's mode read now."""
     # Refuse before touching anything if the 15 GB volume isn't behind the share.
     marker = await dav.get_text(MARKER)
     if marker is None or not marker.startswith(MARKER_TEXT):
         raise VolumeMarkerMissing(
             f"volume marker {MARKER} missing or wrong - refusing to upload (is the VPS volume mounted?)")
 
-    mode_request = await handle_mode_request(hub, dav, store, wall_clock())
+    mode_request, confirmed = await handle_mode_request(hub, dav, store, wall_clock())
     if mode_request is not None and on_mode_request is not None:
         try:
-            await on_mode_request(mode_request, await hub.mode())
+            await on_mode_request(mode_request, confirmed if confirmed is not None else await hub.mode())
         except Exception as exc:  # reporting is never a reason to stop uploading
             log.warning("mode request result not reported yet: %s: %s", type(exc).__name__, exc)
 

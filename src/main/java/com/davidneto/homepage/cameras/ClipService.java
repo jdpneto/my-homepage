@@ -55,7 +55,38 @@ public class ClipService {
     }
 
     public List<ClipView> list(ClipQuery q) {
-        Specification<CameraClip> spec = (r, cq, cb) -> {
+        Sort sort = Sort.by(Sort.Order.desc("startAt"), Sort.Order.desc("id"));
+        return repo.findAll(spec(q), PageRequest.of(0, q.effectiveLimit(), sort)).stream().map(ClipService::view).toList();
+    }
+
+    /**
+     * Clip count and bytes per calendar day, newest day first, for the same filters as
+     * {@link #list} (camera, trigger, kept; from/to/cursor ignored). A clip's day is its date in
+     * its own offset (the cameras' local time), not UTC.
+     */
+    public List<ClipDay> days(String camera, String trigger, Boolean kept) {
+        record Acc(long[] countBytes, OffsetDateTime[] firstLast) {
+        }
+        TreeMap<java.time.LocalDate, Acc> byDay = new TreeMap<>(java.util.Comparator.reverseOrder());
+        for (CameraClip c : repo.findAll(spec(new ClipQuery(camera, trigger, null, null, kept, null, 0)))) {
+            OffsetDateTime start = start(c);
+            Acc a = byDay.computeIfAbsent(start.toLocalDate(), d -> new Acc(new long[2], new OffsetDateTime[2]));
+            a.countBytes()[0]++;
+            a.countBytes()[1] += c.getSizeBytes();
+            if (a.firstLast()[0] == null || start.isBefore(a.firstLast()[0])) a.firstLast()[0] = start;
+            if (a.firstLast()[1] == null || start.isAfter(a.firstLast()[1])) a.firstLast()[1] = start;
+        }
+        List<ClipDay> out = new ArrayList<>();
+        byDay.forEach((day, a) -> out.add(new ClipDay(day.toString(), a.countBytes()[0], a.countBytes()[1],
+                // a day that changes offset (DST) runs from midnight at its first clip's offset to
+                // midnight at its last clip's
+                day.atStartOfDay().atOffset(a.firstLast()[0].getOffset()),
+                day.plusDays(1).atStartOfDay().atOffset(a.firstLast()[1].getOffset()))));
+        return out;
+    }
+
+    private static Specification<CameraClip> spec(ClipQuery q) {
+        return (r, cq, cb) -> {
             List<Predicate> ps = new ArrayList<>();
             if (q.camera() != null && !q.camera().isBlank()) ps.add(cb.equal(r.get("cameraName"), q.camera()));
             if (q.trigger() != null && !q.trigger().isBlank()) {
@@ -73,8 +104,6 @@ public class ClipService {
             }
             return cb.and(ps.toArray(Predicate[]::new));
         };
-        Sort sort = Sort.by(Sort.Order.desc("startAt"), Sort.Order.desc("id"));
-        return repo.findAll(spec, PageRequest.of(0, q.effectiveLimit(), sort)).stream().map(ClipService::view).toList();
     }
 
     public Optional<ClipView> get(long id) {

@@ -21,7 +21,8 @@ import static org.assertj.core.api.Assertions.assertThatCode;
 @ActiveProfiles("test")
 class PersonPushNotifierTest {
 
-    static final String SUMMARY_CLICK = "https://davidneto.eu/admin/cameras?trigger=person";
+    /** A summary mixes person and motion clips: it opens the unfiltered list. */
+    static final String SUMMARY_CLICK = "https://davidneto.eu/admin/cameras";
 
     record Sent(String title, String message, String priority, String tags, String click) {
     }
@@ -120,15 +121,135 @@ class PersonPushNotifierTest {
         assertThat(sent).isEmpty(); // not counted either
     }
 
+    static Sent motion(String title, String click) {
+        return new Sent(title, "Away mode", "high", "warning", click);
+    }
+
     @Test
-    void motionOnlyNeverPushes() {
-        index(clip("Garage", min(1), "away", "motion"));
+    void motionWhileAwayPushes() {
+        index(clip("Garage", min(2), "home", "motion")); // not away: nothing
+        index(clip("Garage", min(31), "away", "motion")); // too old: nothing
+        assertThat(sent).isEmpty();
+        index(clip("Garage", min(2), "away", "motion"));
+        assertThat(sent).containsExactly(motion("Motion · Garage · 14:58",
+                "https://davidneto.eu/admin/cameras?camera=Garage"));
+
+        settings.deleteAll();
+        push = restart();
+        sent.clear();
+        index(clip("Living Room", min(0), "away", "animal", "motion"));
+        assertThat(sent).containsExactly(motion("Motion · Living Room · 15:00",
+                "https://davidneto.eu/admin/cameras?camera=Living%20Room"));
+    }
+
+    @Test
+    void animalOnlyNeverPushes() {
         index(clip("Backyard", min(1), "away", "animal"));
         index(clip("Backyard", min(1), "away"));
+        index(clip("Backyard", min(1), "away", "ANIMAL", ""));
         assertThat(sent).isEmpty();
         at(min(60));
         push.flush();
-        assertThat(sent).isEmpty();
+        assertThat(sent).isEmpty(); // not counted for a summary either
+    }
+
+    @Test
+    void personTitleWinsWhenBothTriggers() {
+        index(clip("Garage", min(0), "away", "motion", "person"));
+        assertThat(sent).containsExactly(person("Person · Garage · 15:00",
+                "https://davidneto.eu/admin/cameras?camera=Garage&trigger=person"));
+        settings.deleteAll();
+        push = restart();
+        sent.clear();
+        index(clip("Garage", min(0), "away", "animal", "MOTION", "Person"));
+        assertThat(sent).extracting(Sent::title, Sent::tags)
+                .containsExactly(org.assertj.core.groups.Tuple.tuple("Person · Garage · 15:00", "bust_in_silhouette"));
+    }
+
+    @Test
+    void summaryCountsMotionAndPerson() {
+        index(clip("Garage", min(0), "away", "motion")); // pushed at once
+        at(min(5));
+        index(clip("Garage", min(0), "away", "motion"));
+        index(clip("Garage", min(0), "away", "person")); // its own slot: pushed at once
+        index(clip("Garage", min(0), "away", "person")); // the person slot is taken: counted
+        index(clip("Backyard", min(0), "away", "motion"));
+        index(clip("Backyard", min(0), "away", "animal")); // not counted
+        assertThat(sent).extracting(Sent::title).containsExactly("Motion · Garage · 15:00", "Person · Garage · 15:05");
+        at(min(60));
+        push.flush();
+        assertThat(sent.get(2)).isEqualTo(summary("3 more clips while away", "Garage 2, Backyard 1"));
+
+        // an hour of motion only: one clip, the motion tag
+        at(min(70));
+        index(clip("Backyard", min(0), "away", "motion"));
+        at(min(120));
+        push.flush();
+        assertThat(sent.get(3)).isEqualTo(new Sent("1 more clip while away", "Backyard 1", "high", "warning",
+                SUMMARY_CLICK));
+        assertThat(sent).hasSize(4);
+    }
+
+    @Test
+    void motionPushNeverHoldsBackAPerson() {
+        // 18:05 wind in the Backyard pushes; 18:19 a person at the Garage must push at once,
+        // not wait for the motion summary (David: "got home at 18:19, the push came at 18:32")
+        index(clip("Backyard", min(0), "away", "motion"));
+        at(min(14));
+        push = restart(); // the slots live in the state row
+        index(clip("Garage", min(0), "away", "person"));
+        assertThat(sent).containsExactly(
+                motion("Motion · Backyard · 15:00", "https://davidneto.eu/admin/cameras?camera=Backyard"),
+                person("Person · Garage · 15:14", "https://davidneto.eu/admin/cameras?camera=Garage&trigger=person"));
+
+        // at most one person push an hour: the next person and more motion are counted
+        at(min(20));
+        push = restart();
+        index(clip("Garage", min(0), "away", "person"));
+        at(min(30));
+        index(clip("Backyard", min(0), "away", "motion"));
+        assertThat(sent).hasSize(2);
+
+        // the summary still comes when the motion hour ends (the person push did not move it)
+        at(min(60));
+        push.flush();
+        assertThat(sent).hasSize(3);
+        assertThat(sent.get(2)).isEqualTo(summary("2 more clips while away", "Backyard 1, Garage 1"));
+
+        // a summary with a person in it counts as the person push of its hour
+        at(min(61));
+        index(clip("Garage", min(0), "away", "person"));
+        assertThat(sent).hasSize(3);
+        at(min(121));
+        push.flush();
+        assertThat(sent.get(3)).isEqualTo(summary("1 more clip while away", "Garage 1"));
+        assertThat(sent).hasSize(4);
+    }
+
+    @Test
+    void personPushAlsoStartsTheMotionHour() {
+        index(clip("Garage", min(0), "away", "person"));
+        at(min(5));
+        index(clip("Backyard", min(0), "away", "motion")); // no second push right after the person one
+        assertThat(sent).hasSize(1);
+        at(min(60));
+        push.flush();
+        assertThat(sent.get(1)).isEqualTo(new Sent("1 more clip while away", "Backyard 1", "high", "warning",
+                SUMMARY_CLICK));
+    }
+
+    @Test
+    void undeliveredPersonPushIsRetriedOnTheNextFlushNotAtTheEndOfTheMotionHour() {
+        index(clip("Backyard", min(0), "away", "motion"));
+        accept = false;
+        at(min(10));
+        index(clip("Garage", min(0), "away", "person"));
+        assertThat(sent).hasSize(2); // attempted, not delivered
+        accept = true;
+        at(min(11));
+        push.flush();
+        assertThat(sent).hasSize(3);
+        assertThat(sent.get(2)).isEqualTo(summary("1 more clip while away", "Garage 1"));
     }
 
     @Test
@@ -168,7 +289,7 @@ class PersonPushNotifierTest {
         push.flush();
         assertThat(sent).hasSize(2);
         // equal counts: by name
-        assertThat(sent.get(1)).isEqualTo(summary("2 more person clips while away", "Backyard 1, Garage 1"));
+        assertThat(sent.get(1)).isEqualTo(summary("2 more clips while away", "Backyard 1, Garage 1"));
 
         // the summary starts the next hour: a clip right after it is counted, not pushed
         at(min(61));
@@ -182,13 +303,13 @@ class PersonPushNotifierTest {
         assertThat(sent).hasSize(2);
         at(min(120));
         push.flush();
-        assertThat(sent.get(2)).isEqualTo(summary("3 more person clips while away", "Garage 2, Backyard 1"));
+        assertThat(sent.get(2)).isEqualTo(summary("3 more clips while away", "Garage 2, Backyard 1"));
 
         at(min(121));
         index(clip("Garage", min(0), "away", "person"));
         at(min(180));
         push.flush();
-        assertThat(sent.get(3)).isEqualTo(summary("1 more person clip while away", "Garage 1"));
+        assertThat(sent.get(3)).isEqualTo(summary("1 more clip while away", "Garage 1"));
         assertThat(sent).hasSize(4);
     }
 
@@ -201,7 +322,7 @@ class PersonPushNotifierTest {
         at(min(60).plusSeconds(30));
         index(clip("Garage", min(0), "away", "person"));
         assertThat(sent).hasSize(2);
-        assertThat(sent.get(1)).isEqualTo(summary("2 more person clips while away", "Backyard 1, Garage 1"));
+        assertThat(sent.get(1)).isEqualTo(summary("2 more clips while away", "Backyard 1, Garage 1"));
         at(min(61));
         push.flush();
         assertThat(sent).hasSize(2);
@@ -262,7 +383,7 @@ class PersonPushNotifierTest {
         at(min(60));
         push.flush();
         assertThat(sent).hasSize(2);
-        assertThat(sent.get(1)).isEqualTo(summary("2 more person clips while away", "Backyard 1, Garage 1"));
+        assertThat(sent.get(1)).isEqualTo(summary("2 more clips while away", "Backyard 1, Garage 1"));
         // one small row
         assertThat(settings.findAll()).filteredOn(s -> s.getName().startsWith("person_push"))
                 .singleElement().satisfies(s -> assertThat(s.getValue().length()).isLessThanOrEqualTo(500));
@@ -282,7 +403,7 @@ class PersonPushNotifierTest {
         at(min(2));
         push.flush();
         assertThat(sent).hasSize(3);
-        assertThat(sent.get(2)).isEqualTo(summary("1 more person clip while away", "Garage 1"));
+        assertThat(sent.get(2)).isEqualTo(summary("1 more clip while away", "Garage 1"));
 
         at(min(3));
         index(clip("Garage", min(0), "away", "person")); // the delivered summary started the hour
@@ -309,6 +430,6 @@ class PersonPushNotifierTest {
         at(min(60));
         push.flush();
         assertThat(sent).hasSize(2);
-        assertThat(sent.get(1).title()).isEqualTo("40 more person clips while away");
+        assertThat(sent.get(1).title()).isEqualTo("40 more clips while away");
     }
 }

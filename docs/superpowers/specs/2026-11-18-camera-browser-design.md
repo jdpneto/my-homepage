@@ -32,7 +32,7 @@ Single user: David. He is not distributing the apps; he installs them on his own
 - Editing or trimming video; AI search.
 
 **Anti-goals — failure even if it "works"**
-- Any path (UI button, API call, deploy option, cleanup bug) that deletes a **kept** clip, or deletes clips younger than 30 days other than by David's explicit single-clip delete.
+- Any path (UI button, API call, deploy option, cleanup bug) that deletes a **kept** clip, or deletes clips younger than the retention period (14 days since 2026-11-24, was 30) other than by David's own deletes (single, day or selection) or the 85 % → 75 % disk safety net (see `2026-11-24-usability-retention-design.md`).
 - Footage reachable without logging in, or indexed by search engines.
 - Anything that talks to the hub or wakes cameras.
 - Filling the VPS root disk (only small thumbnails may live there).
@@ -75,7 +75,7 @@ Single user: David. He is not distributing the apps; he installs them on his own
 - **Volume guard for the indexer and cleanup:** both do nothing (and log) unless `volume-marker.txt` is present with its known text — so a volume that failed to attach (empty bind-mount directory) never makes the indexer drop rows or the cleanup act.
 - **Indexer** (scheduled, every 30 s, and once at startup): walk the cameras folder; a clip is indexable only when its `.json` exists and parses (`.mp4` complete); insert new rows, generate a thumbnail (poster frame ~1 s in, ~480 px wide, JPEG) with the existing ffmpeg tooling; remove rows whose `.mp4` vanished. Ignores `volume-marker.txt` and anything not matching the layout. A malformed `.json` is logged and skipped, not fatal.
 - **Thumbnails** live in a new small Docker volume on the root disk (my call: they are regenerable, ~20–40 KB each, so tens of MB at most), **not** in the WebDAV folder (would count against the quota and show up in WebDAV).
-- **Cleanup** (scheduled daily, 03:30 VPS time — my call): delete clips whose **recording start** (from the index / `.json`, not file mtime) is older than **30 days** and that have **no `.keep` file on disk** (checked on disk at deletion time, not only from the cached flag): `.mp4`, `.json`, thumbnail, row. Configurable retention days. Logs a one-line summary. Never touches kept clips or the marker. If the index looks empty while files exist (e.g. indexer broken), the cleanup does nothing rather than act on stale data.
+- **Cleanup** (scheduled daily, 03:30 VPS time — my call): delete clips whose **recording start** (from the index / `.json`, not file mtime) is older than **14 days** (30 until 2026-11-24; see `2026-11-24-usability-retention-design.md`) and that have **no `.keep` file on disk** (checked on disk at deletion time, not only from the cached flag): `.mp4`, `.json`, thumbnail, row. Configurable retention days. Logs a one-line summary. Never touches kept clips or the marker. If the index looks empty while files exist (e.g. indexer broken), the cleanup does nothing rather than act on stale data.
 - **Manual delete** of one clip: removes `.mp4`, `.json`, thumbnail, row. Allowed for kept clips only after an explicit confirm (UI) — API requires unkeeping first (my call: two deliberate steps).
 - **Disk status:** volume total/used/free, `cameras` quota used/limit, bytes in kept clips vs. not kept, root disk free, newest clip time per camera. Warning level when the volume or quota is ≥ 85 % or root disk ≥ 90 % (my call).
 - **API** (JSON, under `/api/cameras/`, authenticated; my call on shape):

@@ -3,10 +3,16 @@
 from __future__ import annotations
 
 import json
+import logging
 import tomllib
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
+
+log = logging.getLogger(__name__)
+
+# The VPS keeps clips for 14 days: searching further back would only re-upload clips it deleted.
+MAX_BACKFILL_DAYS = 14
 
 
 class ConfigError(Exception):
@@ -26,7 +32,7 @@ class Config:
     log_path: Path
     poll_seconds: int = 30
     settle_seconds: int = 20
-    backfill_days: int = 30
+    backfill_days: int = MAX_BACKFILL_DAYS
     max_attempts: int = 5
     give_up_hours: float = 6
     ffmpeg: str = "/opt/homebrew/bin/ffmpeg"
@@ -76,6 +82,11 @@ def load_config(path: Path) -> Config:
 
     uploader = data.get("uploader", {})
     paths = data.get("paths", {})
+    backfill_days = int(uploader.get("backfill_days", MAX_BACKFILL_DAYS))
+    if backfill_days > MAX_BACKFILL_DAYS:
+        log.warning("uploader.backfill_days = %d is longer than the VPS keeps clips - using %d",
+                    backfill_days, MAX_BACKFILL_DAYS)
+        backfill_days = MAX_BACKFILL_DAYS
     return Config(
         hub_host=_require(data, "hub", "host"),
         hub_user=_require(data, "hub", "user"),
@@ -88,7 +99,7 @@ def load_config(path: Path) -> Config:
         log_path=Path(_require(data, "paths", "log")),
         poll_seconds=int(uploader.get("poll_seconds", 30)),
         settle_seconds=int(uploader.get("settle_seconds", 20)),
-        backfill_days=int(uploader.get("backfill_days", 30)),
+        backfill_days=backfill_days,
         max_attempts=int(uploader.get("max_attempts", 5)),
         give_up_hours=float(uploader.get("give_up_hours", 6)),
         ffmpeg=str(paths.get("ffmpeg", "/opt/homebrew/bin/ffmpeg")),

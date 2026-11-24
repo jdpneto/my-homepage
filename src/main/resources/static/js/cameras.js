@@ -6,16 +6,22 @@
  * (comma list), data-size (bytes); each row's content sits in a button.clip-open, which is
  * what takes focus, followed by its own button.clip-kept (the star, aria-pressed: one tap
  * keeps/unkeeps; inert in select mode, where a tap anywhere on the row ticks it). #clips carries data-next (cursor, absent when there is no further page)
- * and data-query (current filter as a query string, absent when there is no filter), and
+ * and data-query (current filter as a query string, absent when there is no filter),
+ * data-from (start of today: the infinite scroll stays within today), and
  * gets class "selecting" in select mode. Each day is an h3.day (span.day-label,
  * span.day-meta, button.day-select, button.day-delete) followed by its ul.clip-list.
+ * Today's rows are rendered; div#clips-sentinel follows them. Every older day is rendered
+ * collapsed: h3.day.day-collapsed[data-day, data-from, data-to, data-count, data-bytes] whose
+ * label and meta sit in button.day-toggle[aria-expanded], and an empty ul.clip-list[hidden].
+ * Opening it loads its clips (GET clips?from=&to=, 50 at a time; li.day-more-item holds its
+ * "Load more" button); the script then sets data-loaded and data-next (that day's cursor).
  * Select mode: button#select-toggle (filter row), div#select-bar with #select-count,
  * #select-keep, #select-download, #select-delete, #select-cancel.
  * Mode switch: div#mode-switch (data-current, and data-pending-id / data-pending-mode while
  * a request is pending) with button[data-mode="disarm|home|away"][aria-pressed],
  * span.cam-mode-other (a mode with no button, e.g. "off") and span#mode-status (role=status).
  *
- * API used (all under /api/cameras/): clips (paged list), clips/{id} (+ /video, /thumb,
+ * API used (all under /api/cameras/): clips (paged list), days (per-day totals), clips/{id} (+ /video, /thumb,
  * /download, /keep), clips/delete and clips/keep (bulk, explicit ids), clips/zip (one zip of
  * the selected videos), auth/revoke-all, alerts/test,
  * alerts/mute, mode (switch request + its status), status (signed-in probe, storage line).
@@ -62,6 +68,8 @@
     const RETRY_MAX_MS = 60000;
     const CLIP_ID = /^\d+$/;
     const BULK_MAX = 500;          // ids per POST /clips/delete (the server refuses more)
+    const PAGE = 50;               // clips per page while browsing
+    const PAGE_MAX = 200;          // clips per page when a whole day is needed (the server's maximum)
     const ARMED_SLACK_PX = 8;      // an armed day Delete disarms once its heading moves further
     const KEPT_NOT_DELETABLE = 'Kept clips can\'t be deleted — unkeep first';
     // iPhone/iPad: selected clips go to the share sheet ("Save N Videos" to Photos) as files
@@ -406,25 +414,61 @@
         return u === 0 ? v + ' B' : v.toFixed(1) + ' ' + units[u];
     }
 
+    /** Rows the player moves through: those of open days (a collapsed day's rows are skipped). */
+    function navRows() {
+        return allRows().filter(r => !r.parentElement.hidden);
+    }
+
+    /** The h3.day above a ul.clip-list. */
+    function headingOf(list) {
+        const h = list && list.previousElementSibling;
+        return h && h.matches('h3.day') ? h : null;
+    }
+
+    /** An older day: rendered collapsed, its clips loaded by the script (data-from / data-to). */
+    function isOlderDay(heading) {
+        return !!heading && !!heading.dataset.day;
+    }
+
+    /** The last list of the days the server rendered open (today): the infinite scroll's. */
+    function lastOpenList() {
+        const lists = Array.from(clips.querySelectorAll('ul.clip-list')).filter(l => !isOlderDay(headingOf(l)));
+        return lists.length ? lists[lists.length - 1] : null;
+    }
+
+    /** Where new open days go: before the sentinel (inside #clips), else before the older days. */
+    function openDaysEnd() {
+        if (sentinel && sentinel.parentElement === clips) return sentinel;
+        return clips.querySelector('h3.day[data-day]');
+    }
+
     /**
-     * Appends a row under the right day heading: same day as the current last row → that
-     * row's list; otherwise a new h3.day + ul.clip-list (same structure as the server's).
+     * Appends a row from the infinite scroll (today) under the right day heading: same day as
+     * the last open row → that row's list; otherwise a new h3.day + ul.clip-list (same
+     * structure as the server's), still above the older, collapsed days.
      */
     function appendRow(row) {
-        const rows = allRows();
+        const open = lastOpenList();
+        const rows = rowsOf(open);
         const last = rows[rows.length - 1];
         const p = parseStart(row.dataset.start);
         const lastP = last ? parseStart(last.dataset.start) : null;
         if (last && p && lastP && dayKey(p) === dayKey(lastP)) {
-            last.parentElement.appendChild(row);
+            open.appendChild(row);
             return;
         }
         const heading = buildHeading(p ? dayLabel(p) : '');
         const list = document.createElement('ul');
         list.className = 'clip-list';
         list.appendChild(row);
-        clips.appendChild(heading);
-        clips.appendChild(list);
+        const end = openDaysEnd();
+        clips.insertBefore(heading, end);
+        clips.insertBefore(list, end);
+    }
+
+    /** A row of an older day: at the end of its list, before its "Load more". */
+    function appendDayRow(list, row) {
+        list.insertBefore(row, list.querySelector('li.day-more-item'));
     }
 
     /** Same structure as the server's day heading (templates/admin/cameras.html). */
@@ -449,14 +493,23 @@
         return heading;
     }
 
-    /** Takes a row out of the DOM (and the selection); its day goes too when left empty. */
+    /**
+     * Takes a row out of the DOM (and the selection); its day goes too when left empty (an
+     * older day only once nothing of it is left on the server either). An older day's totals
+     * (data-count / data-bytes) go down with it.
+     */
     function detachRow(row) {
         const list = row.parentElement;
+        const heading = headingOf(list);
         selected.delete(row.dataset.id);
+        if (isOlderDay(heading)) {
+            heading.dataset.count = String(Math.max(0, (Number(heading.dataset.count) || 0) - 1));
+            heading.dataset.bytes = String(Math.max(0, (Number(heading.dataset.bytes) || 0) - rowSize(row)));
+        }
         row.remove();
         if (list && !list.querySelector('li.clip')) {
-            const heading = list.previousElementSibling;
-            if (heading && heading.matches('h3.day')) heading.remove();
+            if (isOlderDay(heading) && olderDayHasMore(heading) && Number(heading.dataset.count) > 0) return;
+            if (heading) heading.remove();
             list.remove();
         }
     }
@@ -473,7 +526,8 @@
      * filter." + "Show all clips" when a filter is on (#clips[data-query]), else "No clips here yet."
      */
     function showEmptyIfNone() {
-        if (clips.querySelector('li.clip') || clips.dataset.next || document.querySelector('.cam-empty')) return;
+        if (clips.querySelector('li.clip') || clips.querySelector('h3.day') || clips.dataset.next
+            || document.querySelector('.cam-empty')) return;
         const empty = document.createElement('p');
         empty.className = 'cam-empty';
         if (clips.dataset.query) {
@@ -511,13 +565,22 @@
 
     let loading = null; // the in-flight page load, shared by the observer and the player
 
-    /** Loads the next page (if any). Resolves to the number of rows added. */
-    function loadMore() {
+    /** Filter + from (start of today) for today's pages. */
+    function todayQuery() {
+        const parts = [];
+        if (clips.dataset.query) parts.push(clips.dataset.query);
+        if (clips.dataset.from) parts.push('from=' + encodeURIComponent(clips.dataset.from));
+        return parts.join('&');
+    }
+
+    /** Loads today's next page (if any). Resolves to the number of rows added. */
+    function loadMore(limit) {
         if (loading) return loading;
         const cursor = clips.dataset.next;
         if (!cursor) return Promise.resolve(0);
-        const query = clips.dataset.query || '';
-        const path = '/clips?' + (query ? query + '&' : '') + 'before=' + encodeURIComponent(cursor) + '&limit=50';
+        const query = todayQuery();
+        const path = '/clips?' + (query ? query + '&' : '') + 'before=' + encodeURIComponent(cursor)
+            + '&limit=' + (limit || PAGE);
         clips.setAttribute('aria-busy', 'true');
         loading = api(path)
             .then(body => {
@@ -695,21 +758,34 @@
         returnFocus = null;
     }
 
-    /** Opens the row after `row`, loading the next page when `row` is the last one loaded. */
+    /** The next li.clip after `row` in its own list. */
+    function nextRowInList(row) {
+        let n = row.nextElementSibling;
+        while (n && !n.matches('li.clip')) n = n.nextElementSibling;
+        return n;
+    }
+
+    /**
+     * Opens the row after `row`: the next one of its day, loading the day's next page when
+     * `row` is the last one loaded; after the day's last clip, the first of the next open day.
+     */
     async function openAfter(row) {
         // Deleted, and dropAndAdvance is already waiting for the next page to move on.
         if (!row.isConnected) return;
-        let rows = allRows();
-        const i = rows.indexOf(row);
-        if (i >= 0 && i + 1 < rows.length) return open(rows[i + 1]);
-        if (!clips.dataset.next) return toast('No more clips');
-        await loadMore();
-        if (!isOpen() || current !== row) return; // the user moved on while it loaded
-        rows = allRows();
+        const list = row.parentElement;
+        let next = nextRowInList(row);
+        if (!next && dayMayContinue(list)) {
+            const ok = await loadMoreFor(list);
+            if (!isOpen() || current !== row || !row.isConnected) return; // the user moved on while it loaded
+            next = nextRowInList(row);
+            // A failed load has shown its own error: do not claim the end.
+            if (!next && !ok) return;
+        }
+        if (next) return open(next);
+        const rows = navRows();
         const j = rows.indexOf(row);
         if (j >= 0 && j + 1 < rows.length) open(rows[j + 1]);
-        // A failed load keeps data-next and has shown its own error: do not claim the end.
-        else if (!clips.dataset.next) toast('No more clips');
+        else toast('No more clips');
     }
 
     function openBefore(row) {
@@ -719,7 +795,7 @@
             else toast('This is the newest clip');
             return;
         }
-        const rows = allRows();
+        const rows = navRows();
         const i = rows.indexOf(row);
         if (i > 0) open(rows[i - 1]);
         else toast('This is the newest clip');
@@ -731,14 +807,18 @@
      */
     async function dropAndAdvance(row) {
         const wasCurrent = isOpen() && current === row;
-        const rows = allRows();
+        const rows = navRows();
         const i = rows.indexOf(row);
+        const list = row.parentElement;
+        const heading = headingOf(list);
+        const inList = nextRowInList(row);
         const following = i >= 0 ? rows[i + 1] : null;
         const previous = i > 0 ? rows[i - 1] : null;
+        const mayContinue = !!list && dayMayContinue(list);
         removeRow(row);
         if (!wasCurrent) return;
-        if (following) return open(following);
-        if (clips.dataset.next) {
+        if (inList) return open(inList);
+        if (mayContinue) {
             // `current` stays the removed row until the page arrives. Stop its video first:
             // further range requests would 404 and the error handler would report the clip
             // as gone after a delete that worked. (No src = the error handler ignores it.)
@@ -747,11 +827,14 @@
             disarmDelete();
             showMessage('Loading…');
             detachedPrevious = previous;
-            const before = allRows().length;
-            await loadMore();
-            const after = allRows();
-            if (isOpen() && current === row && after.length > before) return open(after[before]);
+            const before = new Set(allRows());
+            if (isOlderDay(heading)) await loadDayPage(heading);
+            else await loadMore();
+            const added = allRows().filter(r => !before.has(r));
+            if (isOpen() && current === row && added.length) return open(added[0]);
+            if (!isOpen() || current !== row) return;
         }
+        if (following && following.isConnected) return open(following);
         if (current === row) close();
     }
 
@@ -770,6 +853,10 @@
     // A row's button (click, Enter or Space) opens the player, or in select mode ticks the
     // row. The day headings' buttons sit in #clips too.
     clips.addEventListener('click', e => {
+        const dayToggle = e.target.closest('button.day-toggle');
+        if (dayToggle) return onDayToggle(dayToggle);
+        const dayMore = e.target.closest('button.day-more');
+        if (dayMore) return onDayMore(dayMore);
         const dayDelete = e.target.closest('button.day-delete');
         if (dayDelete) return onDayDelete(dayDelete);
         const daySelect = e.target.closest('button.day-select');
@@ -1043,25 +1130,166 @@
         return list && list.matches('ul.clip-list') ? list : null;
     }
 
-    /**
-     * True when the day may go on past the loaded rows: it is the last day loaded and
-     * there is a further page (days are appended in order, so a later list = day ended).
-     */
-    function dayMayContinue(list) {
-        return !list.nextElementSibling && !!clips.dataset.next;
+    /** An older day not loaded yet, or with a further page. */
+    function olderDayHasMore(heading) {
+        return heading.dataset.loaded !== 'true' || !!heading.dataset.next;
     }
 
     /**
-     * Loads pages until a row of an older day appears under `list`'s day, or the list ends.
-     * False when a page failed to load (loadMore has said why) or the day disappeared.
+     * True when the day may go on past the loaded rows. An older day: until its last page
+     * has loaded. Today (the open days): it is the last open day and there is a further page
+     * (days are appended in order, so a later list = day ended).
+     */
+    function dayMayContinue(list) {
+        const heading = headingOf(list);
+        if (isOlderDay(heading)) return olderDayHasMore(heading);
+        return list === lastOpenList() && !!clips.dataset.next;
+    }
+
+    /** Loads the next page of `list`'s day. False when it failed (and has said why). */
+    async function loadMoreFor(list, limit) {
+        const heading = headingOf(list);
+        if (isOlderDay(heading)) {
+            const before = heading.dataset.next;
+            const wasLoaded = heading.dataset.loaded === 'true';
+            const added = await loadDayPage(heading, limit);
+            if (added < 0) return false;
+            return !wasLoaded || heading.dataset.next !== before; // no progress = give up
+        }
+        const cursor = clips.dataset.next;
+        await loadMore(limit);
+        return clips.dataset.next !== cursor;
+    }
+
+    /**
+     * Loads pages until the whole of `list`'s day is there. False when a page failed to load
+     * (and has said why) or the day disappeared.
      */
     async function loadRestOfDay(list) {
         while (list.isConnected && dayMayContinue(list)) {
-            const cursor = clips.dataset.next;
-            await loadMore();
-            if (clips.dataset.next === cursor) return false; // failed: no progress
+            if (!await loadMoreFor(list, PAGE_MAX)) return false;
         }
         return list.isConnected;
+    }
+
+    const dayLoads = new Map(); // older day heading -> its in-flight page load
+
+    /**
+     * Loads an older day's next page (its first when not loaded yet): GET /clips with the
+     * filter, the day's from/to and the day's cursor. Resolves to the rows added, -1 on failure.
+     */
+    function loadDayPage(heading, limit) {
+        if (dayLoads.has(heading)) return dayLoads.get(heading);
+        const list = listOf(heading);
+        if (!list || !heading.dataset.from || !heading.dataset.to) return Promise.resolve(-1);
+        const parts = [];
+        if (clips.dataset.query) parts.push(clips.dataset.query);
+        parts.push('from=' + encodeURIComponent(heading.dataset.from));
+        parts.push('to=' + encodeURIComponent(heading.dataset.to));
+        if (heading.dataset.loaded === 'true' && heading.dataset.next) {
+            parts.push('before=' + encodeURIComponent(heading.dataset.next));
+        }
+        parts.push('limit=' + (limit || PAGE));
+        list.setAttribute('aria-busy', 'true');
+        const more = list.querySelector('button.day-more');
+        if (more) more.setAttribute('aria-disabled', 'true');
+        const load = api('/clips?' + parts.join('&'))
+            .then(body => {
+                let added = 0;
+                for (const c of body.clips || []) {
+                    if (!c || !CLIP_ID.test(String(c.id))) continue; // malformed id: never in the DOM
+                    if (rowById(c.id)) continue; // never show a clip twice
+                    appendDayRow(list, buildRow(c));
+                    added++;
+                }
+                heading.dataset.loaded = 'true';
+                if (body.nextBefore) heading.dataset.next = body.nextBefore;
+                else delete heading.dataset.next;
+                renderDayMore(heading);
+                if (!heading.dataset.next) {
+                    // Fully loaded: the rows are the day (clips may have gone elsewhere meanwhile).
+                    const rows = rowsOf(list);
+                    heading.dataset.count = String(rows.length);
+                    heading.dataset.bytes = String(sumSizes(rows));
+                    if (!rows.length) {
+                        heading.remove();
+                        list.remove();
+                        showEmptyIfNone();
+                    }
+                }
+                refreshListUi();
+                return added;
+            })
+            .catch(err => {
+                failed('Loading the day', err);
+                return -1;
+            })
+            .finally(() => {
+                dayLoads.delete(heading);
+                list.removeAttribute('aria-busy');
+                const btn = list.querySelector('button.day-more');
+                if (btn) btn.removeAttribute('aria-disabled');
+            });
+        dayLoads.set(heading, load);
+        return load;
+    }
+
+    /** The day's "Load more" (an li at the end of its list) while it has a further page. */
+    function renderDayMore(heading) {
+        const list = listOf(heading);
+        if (!list) return;
+        let item = list.querySelector('li.day-more-item');
+        if (!heading.dataset.next) {
+            if (item) {
+                const hadFocus = item.contains(document.activeElement);
+                item.remove();
+                const rows = rowsOf(list);
+                if (hadFocus && rows.length) focusRow(rows[rows.length - 1]);
+            }
+            return;
+        }
+        if (!item) {
+            item = document.createElement('li');
+            item.className = 'day-more-item';
+            const btn = document.createElement('button');
+            btn.type = 'button';
+            btn.className = 'day-more';
+            btn.textContent = 'Load more';
+            item.appendChild(btn);
+            list.appendChild(item);
+        }
+    }
+
+    /** Opens (true) or collapses (false) an older day; opening loads its first page. */
+    function setDayOpen(heading, open) {
+        const toggle = heading.querySelector('.day-toggle');
+        const list = listOf(heading);
+        if (!toggle || !list) return Promise.resolve(0);
+        toggle.setAttribute('aria-expanded', open ? 'true' : 'false');
+        heading.classList.toggle('day-collapsed', !open);
+        const caret = toggle.querySelector('.day-caret');
+        if (caret) caret.textContent = open ? '▾' : '▸';
+        list.hidden = !open;
+        if (!open) {
+            disarmIfOutOfPlace();
+            return Promise.resolve(0);
+        }
+        rearm(); // today's sentinel may have moved
+        return heading.dataset.loaded === 'true' ? Promise.resolve(0) : loadDayPage(heading);
+    }
+
+    function onDayToggle(btn) {
+        const heading = btn.closest('h3.day');
+        if (!heading || !isOlderDay(heading)) return;
+        setDayOpen(heading, btn.getAttribute('aria-expanded') !== 'true');
+    }
+
+    function onDayMore(btn) {
+        if (isBusy(btn)) return;
+        const list = btn.closest('ul.clip-list');
+        const heading = headingOf(list);
+        if (!isOlderDay(heading)) return;
+        loadDayPage(heading);
     }
 
     let headingSeq = 0;
@@ -1086,14 +1314,22 @@
         heading.dataset.named = 'true';
     }
 
-    /** "Today · 12 clips · 34 MB" ("50+ clips" while the day may continue). */
+    /**
+     * "Today · 12 clips · 34 MB" ("50+ clips" while the day may continue); an older day
+     * shows the server's totals until all of it has loaded.
+     */
     function updateDayHeadings() {
         for (const heading of clips.querySelectorAll('h3.day')) {
             labelHeading(heading);
             const list = listOf(heading);
             const rows = rowsOf(list);
             const meta = heading.querySelector('.day-meta');
-            if (meta) {
+            if (meta && isOlderDay(heading)) {
+                const full = !olderDayHasMore(heading);
+                const n = full ? rows.length : Number(heading.dataset.count) || 0;
+                const bytes = full ? sumSizes(rows) : Number(heading.dataset.bytes) || 0;
+                meta.textContent = ' · ' + clipCount(n) + ' · ' + mb(bytes);
+            } else if (meta) {
                 const more = list && dayMayContinue(list);
                 const n = rows.length + (more ? '+' : '');
                 meta.textContent = ' · ' + n + (rows.length === 1 && !more ? ' clip' : ' clips')
@@ -1101,7 +1337,8 @@
             }
             const pick = heading.querySelector('.day-select');
             if (pick) {
-                const all = rows.length > 0 && rows.every(r => selected.has(r.dataset.id));
+                const all = rows.length > 0 && rows.every(r => selected.has(r.dataset.id))
+                    && !(isOlderDay(heading) && olderDayHasMore(heading));
                 pick.setAttribute('aria-pressed', all ? 'true' : 'false');
             }
         }
@@ -1260,8 +1497,9 @@
 
     function nextDayHeading(heading) {
         const list = listOf(heading);
-        const next = list && list.nextElementSibling;
-        return next && next.matches('h3.day') ? next : null;
+        let next = list ? list.nextElementSibling : heading.nextElementSibling;
+        while (next && !next.matches('h3.day')) next = next.nextElementSibling; // past the sentinel
+        return next;
     }
 
     async function onDayDelete(btn) {
@@ -1300,8 +1538,10 @@
     /** "Select day": loads the rest of the day, then ticks all its rows (or unticks them). */
     async function onDaySelect(btn) {
         if (!selecting || bulkBlocked() || isBusy(btn)) return;
-        const list = listOf(btn.closest('h3.day'));
+        const heading = btn.closest('h3.day');
+        const list = listOf(heading);
         if (!list) return;
+        if (isOlderDay(heading) && list.hidden) setDayOpen(heading, true); // show what gets ticked
         bulkBusy = true;
         btn.setAttribute('aria-disabled', 'true');
         let complete = false;
@@ -1396,7 +1636,8 @@
             if (!s) return;
             const quota = Number(s.quotaBytes) || 0;
             const free = quota > 0 ? Math.max(0, quota - (Number(s.quotaUsed) || 0)) : s.volumeFree;
-            line.textContent = 'Kept ' + humanSize(s.keptBytes) + ' · Last 30 days '
+            const days = Number(line.dataset.retentionDays) || 14;
+            line.textContent = 'Kept ' + humanSize(s.keptBytes) + ' · Last ' + days + ' days '
                 + humanSize(s.unkeptBytes) + ' · Free ' + humanSize(free);
         } catch (e) {
             // The line keeps its old numbers; a 401 has shown the banner.
@@ -1829,13 +2070,19 @@
 
     // Disarm / Home / Away. A tap writes a request (POST /mode) that the Mac mini applies within
     // a cycle; #mode-status follows it with GET /mode every 3 s while pending (at most 7 min):
-    // "Switching to away…" → "Away ✓" / "Not applied: <reason>" / "Expired — …". aria-pressed
-    // follows the hub's mode as the heartbeat reports it, never the tap alone. Disarm asks first,
-    // like Delete: the first tap arms "Yes, disarm" for 4 s, a separate second tap sends it.
+    // "Switching to away…" → "Away ✓" / "Not applied: <reason>" / "Expired — …".
+    // The tapped button shows as switching at once (class "switching" + aria-busy) while the
+    // hub's mode stays aria-pressed: a highlight never claims a mode the hub hasn't confirmed.
+    // On "applied" (the Mac mini read the mode back from the hub) the requested mode is
+    // highlighted at once, and GET /mode goes on every 3 s for up to 60 s until the heartbeat's
+    // mode (current) says the same. Failed / expired: back to the mode shown before the tap.
+    // Disarm asks first, like Delete: the first tap arms "Yes, disarm" for 4 s, a separate
+    // second tap sends it.
     const modeSwitch = document.getElementById('mode-switch');
     if (modeSwitch) {
         const MODE_POLL_MS = 3000;
         const MODE_POLL_MAX_MS = 7 * 60 * 1000; // past expires_at (5 min) + the server's 1 min grace
+        const MODE_CONFIRM_MAX_MS = 60 * 1000;  // after "applied": until the heartbeat reports the mode
         const MODE_LABELS = { disarm: 'Disarm', home: 'Home', away: 'Away' };
         const MODE_EXPIRED = "Expired — the Mac mini didn't pick it up";
         const MODE_UNCHECKED = "Couldn't check the switch — reload to see it";
@@ -1847,20 +2094,51 @@
         let disarmArmedAt = 0;
         let disarmTimer = 0;
         let pollTimer = 0;
-        let pollId = null;   // id of the request being followed
+        let pollId = null;     // id of the request being followed
         let pollUntil = 0;
+        let want = null;       // the requested mode
+        let confirming = false; // applied: waiting for the heartbeat's mode to match `want`
+        // The mode highlighted before the tap (or the page load with a pending request).
+        let previousMode = modeName(modeSwitch.dataset.current);
 
         const isModeName = m => Object.prototype.hasOwnProperty.call(MODE_LABELS, m);
 
+        function modeName(mode) {
+            return typeof mode === 'string' && mode.trim() ? mode.trim().toLowerCase() : null;
+        }
+
         /** Highlights the hub's mode; an unknown (null) mode leaves what is shown. */
         function renderCurrent(mode) {
-            if (typeof mode !== 'string' || !mode.trim()) return;
-            const m = mode.trim().toLowerCase();
+            const m = modeName(mode);
+            if (!m) return;
             modeSwitch.dataset.current = m;
             modeButtons.forEach(b => b.setAttribute('aria-pressed', b.dataset.mode === m ? 'true' : 'false'));
             if (modeOther) {
                 modeOther.textContent = isModeName(m) ? '' : '(now ' + m + ')';
                 modeOther.hidden = isModeName(m);
+            }
+        }
+
+        /** The button of `mode` shows as switching (none for null). */
+        function markSwitching(mode) {
+            const m = modeName(mode);
+            modeButtons.forEach(b => {
+                const on = !!m && b.dataset.mode === m;
+                b.classList.toggle('switching', on);
+                if (on) b.setAttribute('aria-busy', 'true');
+                else b.removeAttribute('aria-busy');
+            });
+        }
+
+        /** Failed or expired: the hub's mode when known, else what was shown before the tap. */
+        function restorePrevious(current) {
+            markSwitching(null);
+            const m = modeName(current) || previousMode;
+            if (m) {
+                renderCurrent(m);
+            } else {
+                delete modeSwitch.dataset.current;
+                modeButtons.forEach(b => b.setAttribute('aria-pressed', 'false'));
             }
         }
 
@@ -1874,17 +2152,27 @@
             else silence(modeStatus);
         }
 
+        /** Shows a request's state; `current` is the heartbeat's mode (null = unknown). */
         function renderRequest(r, current) {
-            renderCurrent(current || (r && r.status === 'applied' ? r.mode : null));
-            if (!r) return;
+            if (!r) {
+                markSwitching(null);
+                renderCurrent(current);
+                return;
+            }
             const mode = String(r.mode || '');
             if (r.status === 'pending') {
+                markSwitching(mode);
+                renderCurrent(current); // the hub's mode stays highlighted until it changes
                 setModeStatus('Switching to ' + mode + '…', 'pending');
             } else if (r.status === 'applied') {
+                markSwitching(null);
+                renderCurrent(mode);
                 setModeStatus((MODE_LABELS[mode] || mode) + ' ✓', 'applied');
             } else if (r.status === 'failed') {
+                restorePrevious(current);
                 setModeStatus('Not applied: ' + (r.error ? String(r.error) : 'unknown reason'), 'failed');
             } else if (r.status === 'expired') {
+                restorePrevious(current);
                 setModeStatus(MODE_EXPIRED, 'expired');
             }
         }
@@ -1893,11 +2181,13 @@
             clearTimeout(pollTimer);
             pollTimer = 0;
             pollId = null;
+            confirming = false;
         }
 
-        function follow(id) {
+        function follow(id, mode) {
             stopPolling();
             pollId = id;
+            want = modeName(mode);
             pollUntil = performance.now() + MODE_POLL_MAX_MS;
             pollTimer = setTimeout(poll, MODE_POLL_MS);
         }
@@ -1913,8 +2203,13 @@
                 if (id !== pollId) return;
                 // Signed out (banner shown) or offline (toast shown): stop, do not repeat it every 3 s.
                 if (!(err instanceof ApiError) || err.handled) {
+                    const wasConfirming = confirming;
                     stopPolling();
-                    setModeStatus(MODE_UNCHECKED, 'failed');
+                    // Applied already: the hub has the mode, only the heartbeat was not seen yet.
+                    if (!wasConfirming) {
+                        restorePrevious(null);
+                        setModeStatus(MODE_UNCHECKED, 'failed');
+                    }
                     return;
                 }
                 // Anything else (e.g. a 5xx while the server restarts): try again next time.
@@ -1922,17 +2217,52 @@
             if (id !== pollId) return; // a newer tap took over
             if (s) {
                 const r = s.request;
-                if (r && r.id !== id) pollId = r.id; // replaced from another device: follow that one
-                renderRequest(r, s.current);
-                if (!r || r.status !== 'pending') {
-                    stopPolling();
-                    if (!r) setModeStatus('', '');
-                    return;
+                const current = modeName(s.current);
+                if (r && r.id !== id && r.status === 'pending') {
+                    // replaced from another device: follow that one
+                    pollId = r.id;
+                    want = modeName(r.mode);
+                    confirming = false;
+                    pollUntil = performance.now() + MODE_POLL_MAX_MS;
+                }
+                if (confirming) {
+                    // Applied: the requested mode is shown; wait for the heartbeat to say it too.
+                    if (current === want) {
+                        renderCurrent(current);
+                        stopPolling();
+                        return;
+                    }
+                } else {
+                    if (r && r.id === pollId) renderRequest(r, current);
+                    else renderRequest(null, current);
+                    if (!r || r.id !== pollId) {
+                        stopPolling();
+                        setModeStatus('', '');
+                        return;
+                    }
+                    if (r.status === 'applied') {
+                        if (current !== want) {
+                            // The heartbeat still has the old mode: keep asking, up to MODE_CONFIRM_MAX_MS.
+                            confirming = true;
+                            pollUntil = performance.now() + MODE_CONFIRM_MAX_MS;
+                        } else {
+                            stopPolling();
+                            return;
+                        }
+                    } else if (r.status !== 'pending') {
+                        stopPolling();
+                        return;
+                    }
                 }
             }
             if (performance.now() >= pollUntil) {
+                const wasConfirming = confirming;
                 stopPolling();
-                setModeStatus(MODE_UNCHECKED, 'failed');
+                // Applied but the heartbeat is late: the applied mode stays shown.
+                if (!wasConfirming) {
+                    restorePrevious(null);
+                    setModeStatus(MODE_UNCHECKED, 'failed');
+                }
                 return;
             }
             pollTimer = setTimeout(poll, MODE_POLL_MS);
@@ -1940,12 +2270,17 @@
 
         async function requestMode(mode) {
             stopPolling();
+            previousMode = modeName(modeSwitch.dataset.current);
+            // Feedback at once: the tapped button is "switching" before the request is even sent.
+            markSwitching(mode);
+            setModeStatus('Switching to ' + mode + '…', 'pending');
             try {
                 const r = await api('/mode', 'POST', { mode: mode });
                 if (!r || !r.id) throw new Error('No request id in the answer');
                 renderRequest({ id: r.id, mode: r.mode || mode, status: 'pending' }, null);
-                follow(r.id);
+                follow(r.id, r.mode || mode);
             } catch (err) {
+                restorePrevious(null);
                 if (err instanceof ApiError && err.status === 503) {
                     setModeStatus('Not sent — the camera volume is missing', 'failed');
                 } else if (err instanceof ApiError && err.status === 400) {
@@ -1993,8 +2328,9 @@
 
         // A request still pending when the page loaded: keep following it.
         if (modeSwitch.dataset.pendingId) {
-            renderRequest({ id: modeSwitch.dataset.pendingId, mode: modeSwitch.dataset.pendingMode, status: 'pending' }, null);
-            follow(modeSwitch.dataset.pendingId);
+            renderRequest({ id: modeSwitch.dataset.pendingId, mode: modeSwitch.dataset.pendingMode, status: 'pending' },
+                modeSwitch.dataset.current);
+            follow(modeSwitch.dataset.pendingId, modeSwitch.dataset.pendingMode);
         }
     }
 

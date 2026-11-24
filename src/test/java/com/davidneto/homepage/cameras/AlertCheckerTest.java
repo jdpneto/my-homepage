@@ -78,7 +78,12 @@ class AlertCheckerTest {
         };
         service = new ClipService(files, thumbs, clips, users, props, disk, clock);
         ClipIndexer indexer = new ClipIndexer(files, thumbs, clips, clock);
-        retention = new RetentionJob(files, clips, thumbs, indexer, props, clock) {
+        Notifier notifier = (title, message, priority) -> {
+            sent.add(new Sent(title, message, priority));
+            return true;
+        };
+        mute = new AlertMute(settings, clock);
+        retention = new RetentionJob(files, clips, thumbs, indexer, props, clock, service, notifier, mute, settings) {
             @Override
             public java.util.Optional<String> lastFailure() {
                 return java.util.Optional.ofNullable(retentionFailure[0]);
@@ -89,11 +94,6 @@ class AlertCheckerTest {
                 return true;
             }
         };
-        Notifier notifier = (title, message, priority) -> {
-            sent.add(new Sent(title, message, priority));
-            return true;
-        };
-        mute = new AlertMute(settings, clock);
         checker = new AlertChecker(service, files, retention, states, notifier, props, clock, mute);
         heartbeat(clock.instant(), true, null);
     }
@@ -258,7 +258,8 @@ class AlertCheckerTest {
         checker.check();
         // restart: a fresh RetentionJob that has not run yet knows nothing about the last cleanup
         RetentionJob fresh = new RetentionJob(files, clips, new ClipThumbnailer(props, files, (m, j) -> { }),
-                new ClipIndexer(files, new ClipThumbnailer(props, files, (m, j) -> { }), clips, clock), props, clock);
+                new ClipIndexer(files, new ClipThumbnailer(props, files, (m, j) -> { }), clips, clock), props, clock,
+                service, (t, m, p) -> true, mute, settings);
         AlertChecker again = new AlertChecker(service, files, fresh, states,
                 (t, m, p) -> { sent.add(new Sent(t, m, p)); return true; }, props, clock, mute);
         again.check();

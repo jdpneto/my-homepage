@@ -12,7 +12,11 @@ public class CameraProperties {
     private Path rootDir = Path.of("./cameras");
     /** Thumbnails; never under rootDir (would count against the quota and show in WebDAV). */
     private Path thumbsDir = Path.of("./camera-thumbs");
-    private int retentionDays = 30;
+    private int retentionDays = 14;
+    /** Disk safety net: above this % used (volume or quota), the oldest non-kept clips go... */
+    private int safetyNetHighPercent = 85;
+    /** ...until both are below this %. */
+    private int safetyNetLowPercent = 75;
     private String ntfyUrl = "https://ntfy.sh";
     /** Blank = alerts disabled. */
     private String ntfyTopic = "";
@@ -34,6 +38,10 @@ public class CameraProperties {
     public void setThumbsDir(Path v) { this.thumbsDir = v; }
     public int getRetentionDays() { return retentionDays; }
     public void setRetentionDays(int v) { this.retentionDays = v; }
+    public int getSafetyNetHighPercent() { return safetyNetHighPercent; }
+    public void setSafetyNetHighPercent(int v) { this.safetyNetHighPercent = v; }
+    public int getSafetyNetLowPercent() { return safetyNetLowPercent; }
+    public void setSafetyNetLowPercent(int v) { this.safetyNetLowPercent = v; }
     public String getNtfyUrl() { return ntfyUrl; }
     public void setNtfyUrl(String v) { this.ntfyUrl = v; }
     public String getNtfyTopic() { return ntfyTopic; }

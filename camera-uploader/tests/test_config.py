@@ -15,7 +15,7 @@ def test_load_config_full(config_path):
     assert cfg.webdav_user == "cameras"
     assert cfg.poll_seconds == 30
     assert cfg.settle_seconds == 20
-    assert cfg.backfill_days == 30
+    assert cfg.backfill_days == 14
     assert cfg.max_attempts == 5
     assert cfg.state_path == Path("/usr/local/var/camera-uploader/state.sqlite3")
     assert cfg.tmp_dir == Path("/usr/local/var/camera-uploader/tmp")
@@ -26,6 +26,44 @@ def test_load_config_full(config_path):
 def test_uploader_section_defaults_when_omitted(tmp_path):
     cfg = load_config(write_config(tmp_path, drop="uploader.poll_seconds"))
     assert cfg.poll_seconds == 30
+
+
+def test_backfill_capped_at_14_days(tmp_path, caplog):
+    import logging
+
+    from camera_uploader.config import MAX_BACKFILL_DAYS
+    from conftest import EXAMPLE
+
+    assert MAX_BACKFILL_DAYS == 14
+    # Clips older than the VPS keeps (14 days) would only be re-uploaded and deleted again.
+    path = write_config(tmp_path)
+    path.write_text(path.read_text().replace("backfill_days = 14", "backfill_days = 30"))
+    with caplog.at_level(logging.WARNING, logger="camera_uploader"):
+        cfg = load_config(path)
+    assert cfg.backfill_days == 14
+    warnings = [r for r in caplog.records if r.levelno == logging.WARNING]
+    assert len(warnings) == 1 and "30" in warnings[0].getMessage() and "14" in warnings[0].getMessage()
+
+    # At or below the cap: kept as is, no warning. Omitted: 14. The example says 14.
+    for days in (14, 7, 1):
+        caplog.clear()
+        path.write_text(EXAMPLE.read_text().replace('password = "CHANGE_ME"', 'password = "x"')
+                        .replace("backfill_days = 14", f"backfill_days = {days}"))
+        assert load_config(path).backfill_days == days
+        assert not [r for r in caplog.records if r.levelno >= logging.WARNING]
+    assert load_config(write_config(tmp_path, drop="uploader.backfill_days")).backfill_days == 14
+    assert Config.__dataclass_fields__["backfill_days"].default == 14
+    assert "backfill_days = 14" in EXAMPLE.read_text()
+
+
+def test_version_is_0_3_2():
+    import tomllib
+
+    from camera_uploader import __version__
+
+    pyproject = Path(__file__).resolve().parent.parent / "pyproject.toml"
+    assert __version__ == "0.3.2"
+    assert tomllib.loads(pyproject.read_text())["project"]["version"] == "0.3.2"
 
 
 def test_missing_key_names_it(tmp_path):

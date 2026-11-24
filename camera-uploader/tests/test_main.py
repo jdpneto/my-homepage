@@ -471,6 +471,55 @@ async def test_mode_request_result_sent_before_the_cycle_ends(cfg):
     assert reported[-1]["mode"] == "away"
 
 
+async def test_heartbeat_mode_changes_as_soon_as_switch_is_applied(cfg):
+    # The page highlights the heartbeat's mode: the beat that says "applied" must already say "away",
+    # even when the hub's next mode read (right after the scene change) gets no answer.
+    import json as _json
+    from datetime import timedelta
+
+    requested = NOW.astimezone() - timedelta(minutes=1)
+    request = _json.dumps({"id": "req-8", "mode": "away", "requested_at": requested.isoformat(),
+                           "expires_at": (requested + timedelta(minutes=5)).isoformat()})
+    seen_during_cycle = []
+
+    class Dav(FakeDav):
+        beats: list = []
+
+        async def get_text(self, path):
+            return request if path == "mode-request.json" else await super().get_text(path)
+
+        async def put_bytes(self, path, data, content_type):
+            if path == "heartbeat.json":
+                Dav.beats.append(_json.loads(data))
+
+    class BusyHub(FakeHub):
+        current = "home"
+        reads_after_switch = 0
+        switched = False
+
+        async def mode(self):
+            if BusyHub.switched:
+                BusyHub.reads_after_switch += 1
+                if BusyHub.reads_after_switch == 2:
+                    return None  # the read right after the switch's own read-back times out
+            return BusyHub.current
+
+        async def switch_mode(self, name, not_after=None):
+            BusyHub.current, BusyHub.switched = name, True
+
+        async def list_clips(self, camera, start, end):
+            seen_during_cycle.extend(Dav.beats)
+            return []
+
+    sleep, _ = sleeper(1)
+    with pytest.raises(Stop):
+        await run_forever(cfg, lambda c: BusyHub(), lambda c: Dav(), sleep=sleep, clock=lambda: NOW)
+    applied = [b for b in seen_during_cycle if (b.get("mode_request") or {}).get("status") == "applied"]
+    assert applied, seen_during_cycle
+    assert applied[0]["mode_request"]["id"] == "req-8"
+    assert applied[0]["mode"] == "away"  # in the same send as the result
+
+
 async def test_heartbeat_reports_known_and_offline_cameras(cfg):
     import json as _json
 

@@ -39,9 +39,15 @@ class AdminCamerasPageIT {
     MockMvc mvc;
     Path root;
     final RequestPostProcessor admin = user("admin").roles("ADMIN");
+    /** Today and two days ago in the cameras' offset (+01:00): only today's clips are rendered as rows. */
+    String today;
+    String older;
 
     @BeforeEach
     void setUp() throws Exception {
+        java.time.LocalDate d = java.time.LocalDate.now(java.time.ZoneOffset.ofHours(1));
+        today = d.toString();
+        older = d.minusDays(2).toString();
         mvc = MockMvcBuilders.webAppContextSetup(ctx).apply(springSecurity()).build();
         root = props.getRootDir();
         FileSystemUtils.deleteRecursively(root);
@@ -59,20 +65,25 @@ class AdminCamerasPageIT {
     }
 
     void clip(String camera, String date, String time, String start, String trigger) throws Exception {
+        clip(camera, date, time, start, trigger, 100);
+    }
+
+    void clip(String camera, String date, String time, String start, String trigger, int size) throws Exception {
         Path mp4 = root.resolve(camera + "/" + date + "/" + time + ".mp4");
         Files.createDirectories(mp4.getParent());
-        Files.write(mp4, new byte[100]);
+        Files.write(mp4, new byte[size]);
         Files.writeString(root.resolve(camera + "/" + date + "/" + time + ".json"), """
                 {"camera_name":"%s","camera_id":"id-%s","channel":0,"start":"%s","end":"%s",
                  "duration_seconds":10,"triggers":["%s"]}""".formatted(camera, camera, start,
                 OffsetDateTime.parse(start).plusSeconds(10), trigger));
     }
 
+    /** Three clips today (rendered as rows) and one two days ago (a collapsed day). */
     void fourClips() throws Exception {
-        clip("Garage", "2026-11-18", "21-45-49", "2026-11-18T21:45:49+01:00", "person");
-        clip("Garage", "2026-11-18", "21-49-41", "2026-11-18T21:49:41+01:00", "motion");
-        clip("Living Room", "2026-11-18", "20-00-00", "2026-11-18T20:00:00+01:00", "person");
-        clip("Backyard", "2026-11-16", "19-22-58", "2026-11-16T19:22:58+01:00", "animal");
+        clip("Garage", today, "21-45-49", today + "T21:45:49+01:00", "person");
+        clip("Garage", today, "21-49-41", today + "T21:49:41+01:00", "motion");
+        clip("Living Room", today, "20-00-00", today + "T20:00:00+01:00", "person");
+        clip("Backyard", older, "19-22-58", older + "T19:22:58+01:00", "animal");
         indexer.reconcile();
     }
 
@@ -91,10 +102,11 @@ class AdminCamerasPageIT {
     void pageRendersGroupsNewestFirst() throws Exception {
         fourClips();
         String html = page("/admin/cameras");
-        assertThat(count(html, "data-id=\"")).isEqualTo(4);
-        assertThat(count(html, "<h3 class=\"day\"")).isEqualTo(2);
+        assertThat(count(html, "data-id=\"")).isEqualTo(3); // today's rows; the older day is collapsed
+        assertThat(count(html, "<h3 class=\"day\"")).isEqualTo(1);
+        assertThat(count(html, "<h3 class=\"day day-collapsed\"")).isEqualTo(1);
         assertThat(html.indexOf("21:49:41")).isLessThan(html.indexOf("21:45:49"));
-        assertThat(html.indexOf("21:45:49")).isLessThan(html.indexOf("19:22:58"));
+        assertThat(html.indexOf("21:45:49")).isLessThan(html.indexOf("data-day=\"" + older + "\""));
     }
 
     @Test
@@ -127,7 +139,7 @@ class AdminCamerasPageIT {
         fourClips();
         String html = page("/admin/cameras?camera=Garage");
         assertThat(count(html, "class=\"camera-card\"")).isEqualTo(4); // "All cameras" + 3
-        long garageLatest = repo.findByStem("Garage/2026-11-18/21-49-41").orElseThrow().getId();
+        long garageLatest = repo.findByStem("Garage/" + today + "/21-49-41").orElseThrow().getId();
         assertThat(html).contains("/api/cameras/clips/" + garageLatest + "/thumb");
         assertThat(html).contains("aria-current=\"true\"");
         assertThat(html).contains("2 clips");
@@ -137,7 +149,7 @@ class AdminCamerasPageIT {
     void storagePanelShowsFormattedSizes() throws Exception {
         fourClips();
         String html = page("/admin/cameras");
-        assertThat(html).contains("Kept").contains("Last 30 days").contains("Free").contains("Uploader");
+        assertThat(html).contains("Kept").contains("Last 14 days").contains("Free").contains("Uploader");
         assertThat(html).containsPattern("\\d+(\\.\\d)? (B|KB|MB|GB)");
     }
 
@@ -329,7 +341,7 @@ class AdminCamerasPageIT {
     @Test
     void starIsItsOwnButton() throws Exception {
         fourClips();
-        long keptId = repo.findByStem("Garage/2026-11-18/21-49-41").orElseThrow().getId();
+        long keptId = repo.findByStem("Garage/" + today + "/21-49-41").orElseThrow().getId();
         mvc.perform(org.springframework.test.web.servlet.request.MockMvcRequestBuilders
                 .put("/api/cameras/clips/" + keptId + "/keep").with(admin)
                 .with(org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.csrf()))
@@ -356,7 +368,7 @@ class AdminCamerasPageIT {
                 assertThat(star.group()).contains("aria-pressed=\"" + renderedKept + "\"");
             }
         }
-        assertThat(n).isEqualTo(5); // 4 rows + the template
+        assertThat(n).isEqualTo(4); // today's 3 rows + the template
         assertThat(html).containsPattern("data-id=\"" + keptId + "\"[^>]*data-kept=\"true\"");
         assertThat(html).containsPattern("class=\"clip-kept\"[^>]*aria-pressed=\"true\"[^>]*>★</button>");
 
@@ -466,5 +478,93 @@ class AdminCamerasPageIT {
                 + OffsetDateTime.now() + "\",\"expires_at\":\"" + OffsetDateTime.now().plusMinutes(5) + "\"}");
         String html = page("/admin/cameras");
         assertThat(html).contains("data-pending-id=\"abc-123\"").contains("data-pending-mode=\"away\"");
+    }
+
+    static String collapsedDay(String html, String day) {
+        java.util.regex.Matcher m = java.util.regex.Pattern
+                .compile("<h3 class=\"day day-collapsed\"[^>]*data-day=\"" + day + "\"[^>]*>(.*?)</h3>",
+                        java.util.regex.Pattern.DOTALL).matcher(html);
+        assertThat(m.find()).as("collapsed day %s", day).isTrue();
+        return m.group(0);
+    }
+
+    @Test
+    void onlyTodayRenderedOpenOlderDaysCollapsed() throws Exception {
+        java.time.LocalDate d = java.time.LocalDate.parse(today);
+        String yesterday = d.minusDays(1).toString(), threeAgo = d.minusDays(3).toString();
+        clip("Garage", today, "00-00-01", today + "T00:00:01+01:00", "person");
+        clip("Backyard", today, "00-00-02", today + "T00:00:02+01:00", "motion");
+        for (String t : List.of("08-00-00", "09-00-00", "10-00-00")) {
+            clip("Garage", yesterday, t, yesterday + "T" + t.replace('-', ':') + "+01:00", "motion", 1_048_576);
+        }
+        clip("Backyard", threeAgo, "12-00-00", threeAgo + "T12:00:00+01:00", "animal", 1_048_576);
+        indexer.reconcile();
+        String html = page("/admin/cameras");
+
+        // today: open, its rows rendered
+        assertThat(count(html, "data-id=\"")).isEqualTo(2);
+        assertThat(html).contains(">Today<");
+        for (String stem : List.of("Garage/" + yesterday + "/08-00-00", "Backyard/" + threeAgo + "/12-00-00")) {
+            long id = repo.findByStem(stem).orElseThrow().getId();
+            assertThat(html).as(stem).doesNotContain("data-id=\"" + id + "\"");
+        }
+        // the infinite scroll stays within today
+        assertThat(html).containsPattern("id=\"clips\"[^>]*data-from=\"" + today + "T00:00(:00)?\\+01:00\"");
+
+        // older days: one collapsed row each, newest first, "<Day> · N clips · X MB ▸"
+        String y = collapsedDay(html, yesterday);
+        assertThat(y).contains(">Yesterday<").contains(" · 3 clips · 3.0 MB").contains("▸")
+                .contains("aria-expanded=\"false\"").contains("data-count=\"3\"")
+                .contains("data-bytes=\"" + 3 * 1_048_576 + "\"")
+                .containsPattern("data-from=\"" + yesterday + "T00:00(:00)?\\+01:00\"")
+                .containsPattern("data-to=\"" + today + "T00:00(:00)?\\+01:00\"")
+                .contains("class=\"day-select\"").contains("class=\"day-delete\"");
+        String t = collapsedDay(html, threeAgo);
+        assertThat(t).contains(" · 1 clip · 1.0 MB");
+        assertThat(html.indexOf(y)).isLessThan(html.indexOf(t));
+        assertThat(html.indexOf("data-id=\"")).isLessThan(html.indexOf(y));
+        // each collapsed day is followed by its (empty, hidden) list
+        assertThat(html).containsPattern("data-day=\"" + yesterday + "\"[^>]*>.*?</h3>\\s*<ul class=\"clip-list\" hidden");
+
+        // filters apply to the collapsed days too
+        String garage = page("/admin/cameras?camera=Garage");
+        assertThat(garage).contains("data-day=\"" + yesterday + "\"").doesNotContain("data-day=\"" + threeAgo + "\"");
+        assertThat(count(garage, "data-id=\"")).isEqualTo(1);
+        String animals = page("/admin/cameras?trigger=animal");
+        assertThat(animals).doesNotContain("No clips match").contains("data-day=\"" + threeAgo + "\"")
+                .contains("id=\"select-toggle\"");
+        assertThat(count(animals, "data-id=\"")).isZero();
+
+        String js = mvc.perform(get("/js/cameras.js")).andReturn().getResponse().getContentAsString();
+        assertThat(js).contains("aria-expanded").contains("Load more").contains("dataset.from").contains("dataset.to");
+    }
+
+    @Test
+    void modeSwitchPendingMarkupAndScript() throws Exception {
+        Files.writeString(root.resolve("heartbeat.json"), "{\"time\":\"" + OffsetDateTime.now()
+                + "\",\"hub_ok\":true,\"mode\":\"home\"}");
+        Files.writeString(root.resolve("mode-request.json"), "{\"id\":\"abc-123\",\"mode\":\"away\",\"requested_at\":\""
+                + OffsetDateTime.now() + "\",\"expires_at\":\"" + OffsetDateTime.now().plusMinutes(5) + "\"}");
+        String html = page("/admin/cameras");
+        // the hub's mode stays highlighted; the requested one shows as switching
+        assertThat(pressed(html)).containsExactly("home");
+        java.util.regex.Matcher away = java.util.regex.Pattern.compile("<button[^>]*data-mode=\"away\"[^>]*>").matcher(html);
+        assertThat(away.find()).isTrue();
+        assertThat(away.group()).contains("switching").contains("aria-busy=\"true\"");
+        java.util.regex.Matcher homeBtn = java.util.regex.Pattern.compile("<button[^>]*data-mode=\"home\"[^>]*>").matcher(html);
+        assertThat(homeBtn.find()).isTrue();
+        assertThat(homeBtn.group()).doesNotContain("switching").doesNotContain("aria-busy");
+
+        Files.delete(root.resolve("mode-request.json"));
+        assertThat(page("/admin/cameras")).doesNotContain("aria-busy=\"true\"").doesNotContain("switching\"");
+
+        String js = mvc.perform(get("/js/cameras.js")).andReturn().getResponse().getContentAsString();
+        String modeJs = js.substring(js.indexOf("// ---------------------------------------------------------------- mode switch"),
+                js.indexOf("// ---------------------------------------------------------------- alerts switch"));
+        assertThat(modeJs).contains("'aria-busy'").contains("'switching'")
+                // after "applied": keep asking GET /mode every 3 s, up to 60 s, until current is the requested mode
+                .contains("MODE_CONFIRM_MAX_MS = 60 * 1000").contains("current !== want")
+                // failed / expired: back to the mode shown before the tap
+                .contains("restorePrevious");
     }
 }
