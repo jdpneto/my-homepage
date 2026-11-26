@@ -489,6 +489,18 @@ class AdminCamerasPageIT {
     }
 
     @Test
+    void todayStartsOpenButCanCollapse() throws Exception {
+        clip("Garage", today, "00-00-01", today + "T00:00:01+01:00", "person");
+        indexer.reconcile();
+        String html = page("/admin/cameras");
+        java.util.regex.Matcher m = java.util.regex.Pattern
+                .compile("<h3 class=\"day\">(.*?)</h3>", java.util.regex.Pattern.DOTALL).matcher(html);
+        assertThat(m.find()).as("today's heading").isTrue();
+        assertThat(m.group(1)).contains("class=\"day-toggle\"").contains("aria-expanded=\"true\"")
+                .contains(">Today<").contains("▾");
+    }
+
+    @Test
     void onlyTodayRenderedOpenOlderDaysCollapsed() throws Exception {
         java.time.LocalDate d = java.time.LocalDate.parse(today);
         String yesterday = d.minusDays(1).toString(), threeAgo = d.minusDays(3).toString();

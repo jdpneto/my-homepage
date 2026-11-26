@@ -116,8 +116,9 @@
     <!-- data-from: start of today; the infinite scroll stays within today. -->
     <div id="clips" th:data-next="${nextBefore}" th:data-query="${query}" th:data-from="${todayFrom}">
         <th:block th:each="g : ${groups}">
-            <!-- The script fills .day-meta ("· 12 clips · 34 MB") from the loaded rows. -->
-            <h3 class="day"><span class="day-label" th:text="${g.label}">Today</span><span class="day-meta"></span><button type="button" class="day-select" aria-pressed="false">Select day</button><button type="button" class="day-delete">Delete</button></h3>
+            <!-- The script fills .day-meta ("· 12 clips · 34 MB") from the loaded rows. Starts
+                 open; its toggle collapses it (today's infinite scroll pauses meanwhile). -->
+            <h3 class="day"><button type="button" class="day-toggle" aria-expanded="true"><span class="day-label" th:text="${g.label}">Today</span><span class="day-meta"></span><span class="day-caret" aria-hidden="true">▾</span></button><button type="button" class="day-select" aria-pressed="false">Select day</button><button type="button" class="day-delete">Delete</button></h3>
             <ul class="clip-list">
                 <li class="clip" th:each="c : ${g.clips}"
                     th:attr="data-id=${c.id},data-start=${c.start},data-camera=${c.camera},data-kept=${c.kept},data-size=${c.sizeBytes},data-triggers=${#strings.listJoin(c.triggers, ',')}">

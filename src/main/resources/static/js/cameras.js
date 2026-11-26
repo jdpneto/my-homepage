@@ -10,7 +10,9 @@
  * data-from (start of today: the infinite scroll stays within today), and
  * gets class "selecting" in select mode. Each day is an h3.day (span.day-label,
  * span.day-meta, button.day-select, button.day-delete) followed by its ul.clip-list.
- * Today's rows are rendered; div#clips-sentinel follows them. Every older day is rendered
+ * Every heading's label and meta sit in button.day-toggle[aria-expanded] (with span.day-caret).
+ * Today's rows are rendered, open (collapsible; its infinite scroll pauses while collapsed);
+ * div#clips-sentinel follows them. Every older day is rendered
  * collapsed: h3.day.day-collapsed[data-day, data-from, data-to, data-count, data-bytes] whose
  * label and meta sit in button.day-toggle[aria-expanded], and an empty ul.clip-list[hidden].
  * Opening it loads its clips (GET clips?from=&to=, 50 at a time; li.day-more-item holds its
@@ -480,6 +482,15 @@
         text.textContent = label;
         const meta = document.createElement('span');
         meta.className = 'day-meta';
+        const caret = document.createElement('span');
+        caret.className = 'day-caret';
+        caret.setAttribute('aria-hidden', 'true');
+        caret.textContent = '▾';
+        const toggle = document.createElement('button');
+        toggle.type = 'button';
+        toggle.className = 'day-toggle';
+        toggle.setAttribute('aria-expanded', 'true');
+        toggle.append(text, meta, caret);
         const pick = document.createElement('button');
         pick.type = 'button';
         pick.className = 'day-select';
@@ -489,7 +500,7 @@
         del.type = 'button';
         del.className = 'day-delete';
         del.textContent = 'Delete';
-        heading.append(text, meta, pick, del);
+        heading.append(toggle, pick, del);
         return heading;
     }
 
@@ -635,6 +646,10 @@
     if (sentinel && 'IntersectionObserver' in window && clips.dataset.next) {
         observer = new IntersectionObserver(entries => {
             if (!entries.some(e => e.isIntersecting)) return;
+            // Today collapsed: its sentinel sits right under the heading; load nothing until
+            // it is opened again (setDayOpen re-arms).
+            const today = lastOpenList();
+            if (today && today.hidden) return;
             loadMore().then(added => {
                 if (!observer || !clips.dataset.next) return;
                 if (added > 0) {
@@ -1260,7 +1275,10 @@
         }
     }
 
-    /** Opens (true) or collapses (false) an older day; opening loads its first page. */
+    /**
+     * Opens (true) or collapses (false) a day. Opening an older day loads its first page;
+     * while today is collapsed its infinite scroll pauses (see the observer).
+     */
     function setDayOpen(heading, open) {
         const toggle = heading.querySelector('.day-toggle');
         const list = listOf(heading);
@@ -1275,12 +1293,13 @@
             return Promise.resolve(0);
         }
         rearm(); // today's sentinel may have moved
+        if (!isOlderDay(heading)) return Promise.resolve(0);
         return heading.dataset.loaded === 'true' ? Promise.resolve(0) : loadDayPage(heading);
     }
 
     function onDayToggle(btn) {
         const heading = btn.closest('h3.day');
-        if (!heading || !isOlderDay(heading)) return;
+        if (!heading) return;
         setDayOpen(heading, btn.getAttribute('aria-expanded') !== 'true');
     }
 
@@ -1541,7 +1560,7 @@
         const heading = btn.closest('h3.day');
         const list = listOf(heading);
         if (!list) return;
-        if (isOlderDay(heading) && list.hidden) setDayOpen(heading, true); // show what gets ticked
+        if (list.hidden) setDayOpen(heading, true); // show what gets ticked
         bulkBusy = true;
         btn.setAttribute('aria-disabled', 'true');
         let complete = false;
